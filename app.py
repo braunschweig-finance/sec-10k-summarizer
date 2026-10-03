@@ -103,7 +103,6 @@ def extract_metric(df, concepts, labels):
         target_df = df
 
     vals = []
-    # Concept check
     for c_col in ["standard_concept", "concept"]:
         if c_col in target_df.columns:
             for c in concepts:
@@ -113,7 +112,6 @@ def extract_metric(df, concepts, labels):
                     if n is not None:
                         vals.append(n)
 
-    # Label check
     if "label" in target_df.columns:
         for lbl in labels:
             for _, r in target_df.iterrows():
@@ -129,8 +127,8 @@ def extract_metric(df, concepts, labels):
 
 def calculate_debt_and_equity(bal_df):
     """
-    Computes total consolidated debt and total stockholders' equity accurately across both
-    pure-operating companies (AAPL) and multi-division/captive-finance companies (CAT, ADM).
+    Accurately computes total funded debt and equity.
+    Captures both pure-play corporate debt and multi-division/captive-finance debt (CAT, ADM, AAPL).
     """
     if bal_df is None or bal_df.empty:
         return None, None
@@ -154,43 +152,45 @@ def calculate_debt_and_equity(bal_df):
         equity = total_assets - total_liab
 
     # 2. Total Debt Calculation
-    # First: Check for explicit consolidated Total Debt line
-    explicit_total_debt = extract_metric(bal_df, ["TotalDebt", "DebtInstrumentCarryingAmount"], ["Total debt"])
-    if explicit_total_debt and explicit_total_debt > 10000:
-        return explicit_total_debt, equity
+    # Direct check for explicit consolidated Total Debt
+    explicit_total = extract_metric(bal_df, ["TotalDebt", "DebtInstrumentCarryingAmount"], ["Total debt"])
+    if explicit_total and explicit_total > 15000:
+        return explicit_total, equity
 
-    # Second: Sum all funded debt line items across all reported columns/segments
-    # Identifies short-term debt and long-term debt rows explicitly
-    st_debt_sum = 0.0
-    lt_debt_sum = 0.0
-    
+    # Sum debt items across all sections including captive finance / Financial Products
+    total_debt_accum = 0.0
     label_col = "label" if "label" in bal_df.columns else None
 
-    for _, r in bal_df.iterrows():
-        lbl = (str(r[label_col]) if label_col else "").lower()
-        cpt = (str(r.get("concept", "")) + " " + str(r.get("standard_concept", ""))).lower()
-        line_text = f"{lbl} {cpt}"
-        
-        # Exclude aggregate summary lines or equity/tax descriptions
-        if any(bad in line_text for bad in ["total debt", "total liabilities", "interest", "tax", "fair value", "derivative", "intersegment"]):
-            continue
-            
-        val = parse_num(r[latest_col])
-        if not val or val <= 0:
-            continue
-            
-        # Match short-term borrowings
-        if any(term in line_text for term in ["short-term borrowings", "short-term debt", "commercial paper", "current portion of long-term debt", "debtcurrent"]):
-            st_debt_sum += val
-        # Match long-term debt
-        elif any(term in line_text for term in ["long-term debt due after one year", "long-term debt, including current", "long-term debt", "term debt", "longtermdebtnoncurrent"]):
-            lt_debt_sum += val
+    # Track unique concept/label pairs to avoid summing identical values from multiple display columns
+    seen_keys = set()
 
-    funded_debt = st_debt_sum + lt_debt_sum
-    
-    # Sanity check: If funded debt was correctly found (> 0), use it; otherwise fallback to Total Liabilities
-    final_debt = funded_debt if funded_debt > 0 else total_liab
-    
+    for idx, r in bal_df.iterrows():
+        lbl = (str(r[label_col]) if label_col else "").lower().strip()
+        cpt = (str(r.get("concept", "")) + " " + str(r.get("standard_concept", ""))).lower().strip()
+        row_key = f"{lbl}::{cpt}"
+
+        # Match short-term and long-term funded debt
+        is_st_debt = any(k in lbl or k in cpt for k in [
+            "short-term borrowings", "short-term debt", "commercial paper", "current portion of long-term debt", "debtcurrent"
+        ])
+        is_lt_debt = any(k in lbl or k in cpt for k in [
+            "long-term debt due after one year", "long-term debt, including current", "long-term debt", "term debt", "longtermdebtnoncurrent"
+        ])
+
+        # Exclude aggregate parent rows, tax, interest, fair value disclosures
+        is_invalid = any(bad in lbl or bad in cpt for bad in [
+            "total liabilities", "interest", "income tax", "fair value", "fair_value", "derivative", "intersegment", "elimination"
+        ])
+
+        if (is_st_debt or is_lt_debt) and not is_invalid and row_key not in seen_keys:
+            val = parse_num(r[latest_col])
+            if val is not None and val > 0:
+                total_debt_accum += val
+                seen_keys.add(row_key)
+
+    # If aggregated funded debt is found (> $1B), return it; otherwise fallback to Total Liabilities
+    final_debt = total_debt_accum if total_debt_accum > 1000 else total_liab
+
     return final_debt, equity
 
 @st.cache_data(show_spinner=False)
@@ -333,7 +333,7 @@ if run_analysis or ticker:
                 ["Total current liabilities", "Current liabilities"]
             )
             
-            # 6. Debt and Equity
+            # 6. Total Debt & Stockholders' Equity
             total_debt, stockholders_equity = calculate_debt_and_equity(raw_bal)
 
             # Calculated Ratios
