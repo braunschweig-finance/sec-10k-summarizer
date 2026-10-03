@@ -1,3 +1,4 @@
+import re
 import time
 import warnings
 import pandas as pd
@@ -21,28 +22,46 @@ st.sidebar.header("Terminal Navigation")
 ticker = st.sidebar.text_input("Enter Ticker Symbol:", "CAT").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
+def is_date_or_period_column(col_name):
+    """Detects whether a column represents an audited fiscal reporting period (e.g., 2025-12-31 (FY))."""
+    s = str(col_name).strip()
+    # Matches strings starting with 4-digit years (2020-2035) or containing FY/CY
+    if re.search(r"\b20[2-3][0-9]", s):
+        return True
+    if any(tag in s.upper() for tag in ["(FY)", "(CY)", "Q1", "Q2", "Q3", "Q4"]):
+        return True
+    return False
+
 def clean_statement_df(df):
-    """Filters metadata columns and retains only audited fiscal period reporting columns."""
+    """Strictly retains row label and numeric fiscal date period columns."""
     if df is None or df.empty:
         return None
     
-    # Exclude all SEC technical metadata and taxonomy columns
-    meta_cols = {
-        "concept", "standard_concept", "level", "abstract", 
-        "dimension", "dimension_axis", "dimension_member", 
-        "dimension_label", "balance", "weight", "preferred_sign", 
-        "is_breakdown", "decimals"
-    }
+    # 1. Find line-item label column
+    label_col = None
+    for cand in ["label", "standard_concept", "concept"]:
+        if cand in df.columns:
+            label_col = cand
+            break
+            
+    # 2. Filter exclusively for audited date/period columns
+    period_cols = [c for c in df.columns if is_date_or_period_column(c)]
     
-    label_col = "label" if "label" in df.columns else None
-    
-    # Keep only period columns (e.g., date formats or FY/CY tags)
-    period_cols = [c for c in df.columns if c not in meta_cols and c != "label"]
-    
+    if not period_cols:
+        # Fallback: keep non-technical string columns if regex finds no match
+        meta_blacklist = {
+            "concept", "standard_concept", "level", "abstract", "dimension",
+            "dimension_axis", "dimension_member", "dimension_label", 
+            "dimension_member_label", "parent_concept", "parent_abstract",
+            "balance", "weight", "preferred_sign", "is_breakdown", "decimals"
+        }
+        period_cols = [c for c in df.columns if str(c).lower() not in meta_blacklist and c != label_col]
+
     if label_col:
         cols_to_keep = [label_col] + period_cols
         cleaned = df[cols_to_keep].copy()
-        cleaned = cleaned.set_index("label")
+        cleaned = cleaned.rename(columns={label_col: "Line Item"})
+        cleaned = cleaned.set_index("Line Item")
     else:
         cleaned = df[period_cols].copy()
         
@@ -182,15 +201,15 @@ if run_analysis or ticker:
             current_assets = extract_metric(balance, ["total current assets"])
             current_liab = extract_metric(balance, ["total current liabilities"])
             
-            # Robust Debt & Equity Resolution (Handles Industrials, Financial Products & Tech)
-            st_debt = extract_metric(balance, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings"]) or 0
-            lt_debt = extract_metric(balance, ["long-term debt due after one year", "long-term debt", "term debt", "total debt"]) or 0
+            # Broad Sector Debt Parsing (Handles Industrials, Financial Products & Tech)
+            st_debt = extract_metric(balance, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings", "notes payable"]) or 0
+            lt_debt = extract_metric(balance, ["long-term debt due after one year", "long-term debt", "term debt"]) or 0
             total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric(balance, ["total debt", "total liabilities", "liabilities"])
             
+            # Stockholders' equity search
             stockholders_equity = extract_metric(balance, [
-                "total shareholders' equity", "total stockholders' equity", 
                 "shareholders' equity", "stockholders' equity", "total equity", 
-                "caterpillar shareholders' equity"
+                "caterpillar", "total stockholders' equity", "total shareholders' equity"
             ])
             
             # Calculate ratios
