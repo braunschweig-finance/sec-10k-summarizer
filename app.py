@@ -61,7 +61,7 @@ def clean_statement_df(df):
     else:
         cleaned = df[period_cols].copy()
 
-    # Format large integers/floats with thousands commas for readability
+    # Format values with commas for tabular display
     for col in cleaned.columns:
         def format_val(x):
             try:
@@ -75,20 +75,33 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_metric(df, keywords):
-    """Searches statement index for keywords and extracts the latest reported numeric value."""
+def extract_metric_raw(df, keywords):
+    """Finds target line item in raw XBRL DataFrame and extracts the latest reported numeric value."""
     if df is None or df.empty:
         return None
-    for idx in df.index:
-        row_str = str(idx).lower()
-        if any(kw.lower() in row_str for kw in keywords):
-            row_data = df.loc[idx]
-            # Handle duplicate row labels
-            if isinstance(row_data, pd.DataFrame):
-                row_data = row_data.iloc[0]
-            # Search backward from the latest reported period
-            for col in reversed(row_data.index):
-                val = row_data[col]
+    
+    # Identify label column in raw dataframe
+    label_col = None
+    for cand in ["label", "standard_concept", "concept"]:
+        if cand in df.columns:
+            label_col = cand
+            break
+    if not label_col:
+        return None
+
+    # Get audited fiscal date columns sorted chronologically
+    date_cols = [c for c in df.columns if is_date_or_period_column(c)]
+    if not date_cols:
+        return None
+    
+    # Target the most recent period column
+    latest_col = date_cols[0] 
+
+    for _, row in df.iterrows():
+        row_label = str(row[label_col]).lower()
+        if any(kw.lower() in row_label for kw in keywords):
+            for col in date_cols:
+                val = row[col]
                 if pd.notna(val) and val != "" and str(val).lower() != "none":
                     try:
                         clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
@@ -197,29 +210,28 @@ if run_analysis or ticker:
             st.markdown("### Deterministic Ratio Analysis")
             st.caption("Computed via Python from audited line items (zero AI token consumption).")
             
-            # Use raw unformatted DataFrames for clean float calculations
-            inc_df = clean_statement_df(data.get("raw_income"))
-            bal_df = clean_statement_df(data.get("raw_balance"))
+            raw_inc = data.get("raw_income")
+            raw_bal = data.get("raw_balance")
             
             # Universal Revenue and Cost Parsing
-            revenue = extract_metric(inc_df, ["total sales and revenues", "total net sales", "total revenues", "revenue", "sales"])
-            cost_of_goods = extract_metric(inc_df, ["cost of goods sold", "cost of sales", "cost of products sold", "operating costs"])
-            gross_profit = extract_metric(inc_df, ["gross margin", "gross profit"])
+            revenue = extract_metric_raw(raw_inc, ["total sales and revenues", "total net sales", "total revenues", "revenue", "sales"])
+            cost_of_goods = extract_metric_raw(raw_inc, ["cost of goods sold", "cost of sales", "cost of products sold", "operating costs"])
+            gross_profit = extract_metric_raw(raw_inc, ["gross margin", "gross profit"])
             
             if not gross_profit and revenue and cost_of_goods:
                 gross_profit = revenue - cost_of_goods
                 
-            operating_income = extract_metric(inc_df, ["operating income", "operating profit", "operating earnings"])
-            current_assets = extract_metric(bal_df, ["total current assets"])
-            current_liab = extract_metric(bal_df, ["total current liabilities"])
+            operating_income = extract_metric_raw(raw_inc, ["operating income", "operating profit", "operating earnings"])
+            current_assets = extract_metric_raw(raw_bal, ["total current assets"])
+            current_liab = extract_metric_raw(raw_bal, ["total current liabilities"])
             
-            # Robust Debt Parsing across Industrials and Tech
-            st_debt = extract_metric(bal_df, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings", "notes payable"]) or 0
-            lt_debt = extract_metric(bal_df, ["long-term debt due after one year", "long-term debt", "term debt"]) or 0
-            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric(bal_df, ["total liabilities", "liabilities"])
+            # Universal Debt Parsing
+            st_debt = extract_metric_raw(raw_bal, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings", "notes payable"]) or 0
+            lt_debt = extract_metric_raw(raw_bal, ["long-term debt due after one year", "long-term debt", "term debt"]) or 0
+            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric_raw(raw_bal, ["total debt", "total liabilities", "liabilities"])
             
-            # Robust Stockholders' Equity resolution (CAT specific: "caterpillar shareholders' equity")
-            stockholders_equity = extract_metric(bal_df, [
+            # Universal Equity Parsing
+            stockholders_equity = extract_metric_raw(raw_bal, [
                 "caterpillar shareholders' equity", "total shareholders' equity", 
                 "total stockholders' equity", "shareholders' equity", 
                 "stockholders' equity", "total equity", "common stockholders' equity"
