@@ -19,11 +19,11 @@ st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Dynamic Ratios & DEF 1
 
 # Sidebar Controls
 st.sidebar.header("Terminal Navigation")
-ticker = st.sidebar.text_input("Enter Ticker Symbol:", "CAT").upper().strip()
+ticker = st.sidebar.text_input("Enter Ticker Symbol:", "ADM").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
 def is_date_or_period_column(col_name):
-    """Detects whether a column represents an audited fiscal reporting period (e.g., 2025-12-31 (FY))."""
+    """Detects whether a column represents an audited fiscal reporting period."""
     s = str(col_name).strip()
     if re.search(r"\b20[2-3][0-9]", s):
         return True
@@ -80,7 +80,6 @@ def extract_metric_raw(df, keywords):
     if df is None or df.empty:
         return None
     
-    # Identify label column in raw dataframe
     label_col = None
     for cand in ["label", "standard_concept", "concept"]:
         if cand in df.columns:
@@ -89,13 +88,9 @@ def extract_metric_raw(df, keywords):
     if not label_col:
         return None
 
-    # Get audited fiscal date columns sorted chronologically
     date_cols = [c for c in df.columns if is_date_or_period_column(c)]
     if not date_cols:
         return None
-    
-    # Target the most recent period column
-    latest_col = date_cols[0] 
 
     for _, row in df.iterrows():
         row_label = str(row[label_col]).lower()
@@ -214,27 +209,44 @@ if run_analysis or ticker:
             raw_bal = data.get("raw_balance")
             
             # Universal Revenue and Cost Parsing
-            revenue = extract_metric_raw(raw_inc, ["total sales and revenues", "total net sales", "total revenues", "revenue", "sales"])
-            cost_of_goods = extract_metric_raw(raw_inc, ["cost of goods sold", "cost of sales", "cost of products sold", "operating costs"])
+            revenue = extract_metric_raw(raw_inc, [
+                "total sales and revenues", "total net sales", "total revenues", 
+                "revenue", "sales and other operating revenues", "revenues"
+            ])
+            cost_of_goods = extract_metric_raw(raw_inc, [
+                "cost of products sold", "cost of goods sold", "cost of sales", "operating costs"
+            ])
             gross_profit = extract_metric_raw(raw_inc, ["gross margin", "gross profit"])
             
             if not gross_profit and revenue and cost_of_goods:
                 gross_profit = revenue - cost_of_goods
                 
-            operating_income = extract_metric_raw(raw_inc, ["operating income", "operating profit", "operating earnings"])
+            # Universal Operating Income (handles ADM "segment operating profit" & industrial terminology)
+            operating_income = extract_metric_raw(raw_inc, [
+                "segment operating profit", "operating profit", "operating income", 
+                "earnings before income taxes", "operating earnings"
+            ])
+            
             current_assets = extract_metric_raw(raw_bal, ["total current assets"])
             current_liab = extract_metric_raw(raw_bal, ["total current liabilities"])
             
-            # Universal Debt Parsing
-            st_debt = extract_metric_raw(raw_bal, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings", "notes payable"]) or 0
-            lt_debt = extract_metric_raw(raw_bal, ["long-term debt due after one year", "long-term debt", "term debt"]) or 0
+            # Universal Debt Parsing (handles short borrowings, long debt, term facilities)
+            st_debt = extract_metric_raw(raw_bal, [
+                "short-term debt", "short-term borrowings", "commercial paper", 
+                "current portion of long-term debt", "notes payable"
+            ]) or 0
+            lt_debt = extract_metric_raw(raw_bal, [
+                "long-term debt, including current maturities", "long-term debt due after one year", 
+                "long-term debt", "term debt"
+            ]) or 0
             total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric_raw(raw_bal, ["total debt", "total liabilities", "liabilities"])
             
-            # Universal Equity Parsing
+            # Universal Equity Parsing (handles ADM, CAT, and tech variations)
             stockholders_equity = extract_metric_raw(raw_bal, [
-                "caterpillar shareholders' equity", "total shareholders' equity", 
-                "total stockholders' equity", "shareholders' equity", 
-                "stockholders' equity", "total equity", "common stockholders' equity"
+                "total shareholders' equity", "total stockholders' equity", 
+                "shareholders' equity", "stockholders' equity", "total equity", 
+                "adm shareholders' equity", "caterpillar shareholders' equity", 
+                "common stockholders' equity"
             ])
             
             # Calculate ratios
