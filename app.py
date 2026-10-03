@@ -5,7 +5,7 @@ import streamlit as st
 from edgar import Company, set_identity
 from google import genai
 
-# Suppress internal library warnings
+# Suppress internal warnings
 warnings.filterwarnings("ignore")
 
 # 1. SEC Identification
@@ -13,7 +13,7 @@ set_identity("Jacob Braunschweig jacob.braunschweig@gmail.com")
 
 # 2. Page Configuration (NetAdvantage / Capital IQ Style)
 st.set_page_config(page_title="SEC Financial & Corporate Governance Terminal", layout="wide")
-st.title("🏛️ SEC Financial & Corporate Governance Terminal")
+st.title("🏛️️ SEC Financial & Corporate Governance Terminal")
 st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Dynamic Ratios & DEF 14A Governance")
 
 # Sidebar Controls
@@ -22,18 +22,23 @@ ticker = st.sidebar.text_input("Enter Ticker Symbol:", "AAPL").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
 def clean_statement_df(df):
-    """Strips raw US-GAAP taxonomy metadata columns and sets label as index."""
+    """Filters metadata columns and prepares audited numeric tables."""
     if df is None or df.empty:
         return None
-    # Drop technical taxonomy columns
-    drop_cols = [c for c in ["concept", "standard_concept"] if c in df.columns]
-    cleaned = df.drop(columns=drop_cols)
+    # Strip raw taxonomy and boolean/structural flags
+    cols_to_drop = [c for c in ["concept", "standard_concept", "level", "abstract", "dimension", "is_breakdown"] if c in df.columns]
+    cleaned = df.drop(columns=cols_to_drop)
+    
+    # Filter out pure abstract parent rows if present
+    if "abstract" in df.columns:
+        cleaned = cleaned[~df["abstract"].astype(bool)]
+        
     if "label" in cleaned.columns:
         cleaned = cleaned.set_index("label")
     return cleaned
 
 def extract_metric(df, keywords):
-    """Finds row matching keywords and extracts the latest reported numeric value."""
+    """Finds the most recent valid financial dollar value from target rows."""
     if df is None or df.empty:
         return None
     for idx in df.index:
@@ -42,14 +47,16 @@ def extract_metric(df, keywords):
             series = df.loc[idx]
             if isinstance(series, pd.DataFrame):
                 series = series.iloc[0]
-            val_candidates = series.dropna().tolist()
-            for v in reversed(val_candidates):
-                try:
-                    num_str = str(v).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip()
-                    val = float(num_str)
-                    return val
-                except (ValueError, TypeError):
-                    continue
+            # Search from most recent reported period column backwards
+            for col in series.index:
+                val = series[col]
+                if pd.notna(val) and val != "":
+                    try:
+                        clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                        if abs(clean_num) > 1000:  # Ensures it's an actual reported dollar figure, not a flag or ratio
+                            return clean_num
+                    except (ValueError, TypeError):
+                        continue
     return None
 
 @st.cache_data(show_spinner=False)
@@ -63,32 +70,38 @@ def get_sec_data(ticker_symbol):
         balance_df = clean_statement_df(financials.balance_sheet().to_dataframe()) if financials else None
         cashflow_df = clean_statement_df(financials.cash_flow_statement().to_dataframe()) if financials else None
 
-        # 2. Extract Key Sections from Form DEF 14A (Proxy Statement)
+        # 2. Extract Text from Form DEF 14A (Proxy Statement)
         proxy_filings = company.get_filings(form="DEF 14A")
         governance_sections = {}
         proxy_raw = ""
         
         if proxy_filings:
-            latest_proxy = proxy_filings[0].obj()
-            proxy_raw = str(latest_proxy)
+            # Use .text() or raw document extraction to get the actual filing text
+            latest_proxy_filing = proxy_filings[0]
+            try:
+                proxy_raw = latest_proxy_filing.text()
+            except Exception:
+                proxy_raw = str(latest_proxy_filing.obj())
+                
+            proxy_lower = proxy_raw.lower()
             
             section_targets = {
                 "Executive Compensation & Pay Analysis": ["executive compensation", "compensation discussion and analysis", "summary compensation table"],
-                "Board of Directors & Committee Independence": ["board of directors", "director independence", "board committees"],
-                "Shareholder Proposals & Voting Items": ["shareholder proposal", "proposal 1", "matters to be voted on"]
+                "Board of Directors & Committee Independence": ["board of directors", "director independence", "board committees and composition"],
+                "Shareholder Proposals & Voting Items": ["shareholder proposal", "proposal 1", "matters to be voted on", "items of business"]
             }
             
             for section_title, keywords in section_targets.items():
                 found_pos = -1
                 for kw in keywords:
-                    pos = proxy_raw.lower().find(kw)
+                    pos = proxy_lower.find(kw)
                     if pos != -1:
                         found_pos = pos
                         break
                 if found_pos != -1:
                     governance_sections[section_title] = proxy_raw[found_pos : found_pos + 3500].strip()
                 else:
-                    governance_sections[section_title] = "Specific section heading not automatically resolved in filing text."
+                    governance_sections[section_title] = "Specific heading not directly matched in filing text. Full proxy is accessible for LLM synthesis."
 
         return {
             "name": company.name,
@@ -96,7 +109,7 @@ def get_sec_data(ticker_symbol):
             "balance": balance_df,
             "cashflow": cashflow_df,
             "gov_sections": governance_sections,
-            "proxy_raw": proxy_raw[:6000]
+            "proxy_raw": proxy_raw[:8000]
         }, None
     except Exception as e:
         return None, str(e)
@@ -110,7 +123,6 @@ if run_analysis or ticker:
     elif data:
         st.subheader(f"{data['name']} ({ticker})")
         
-        # S&P Capital IQ / NetAdvantage Style Navigation
         tab_stmt, tab_ratios, tab_gov, tab_memo = st.tabs([
             "📋 Financial Statements", 
             "📈 Financial Ratios", 
@@ -127,26 +139,27 @@ if run_analysis or ticker:
                 horizontal=True
             )
             
+            selected_df = None
             if stmt_view == "Income Statement":
-                if data["income"] is not None:
-                    st.dataframe(data["income"], use_container_width=True)
-                else:
-                    st.info("Direct Income Statement XBRL table not available.")
+                selected_df = data["income"]
             elif stmt_view == "Balance Sheet":
-                if data["balance"] is not None:
-                    st.dataframe(data["balance"], use_container_width=True)
-                else:
-                    st.info("Direct Balance Sheet XBRL table not available.")
+                selected_df = data["balance"]
             elif stmt_view == "Cash Flow":
-                if data["cashflow"] is not None:
-                    st.dataframe(data["cashflow"], use_container_width=True)
-                else:
-                    st.info("Direct Cash Flow XBRL table not available.")
+                selected_df = data["cashflow"]
+
+            if selected_df is not None and not selected_df.empty:
+                # Format numeric columns to display cleanly with commas
+                display_df = selected_df.copy()
+                for c in display_df.columns:
+                    display_df[c] = pd.to_numeric(display_df[c], errors="ignore")
+                st.dataframe(display_df, use_container_width=True)
+            else:
+                st.info("Direct XBRL table not available for this statement.")
 
         # TAB 2: FINANCIAL RATIOS (Computed with Python)
         with tab_ratios:
             st.markdown("### Deterministic Ratio Analysis")
-            st.caption("Computed via Python from audited XBRL tables (zero AI token consumption).")
+            st.caption("Computed via Python from audited line items (zero AI token consumption).")
             
             income = data["income"]
             balance = data["balance"]
@@ -154,11 +167,11 @@ if run_analysis or ticker:
             # Extract line items dynamically
             revenue = extract_metric(income, ["total net sales", "revenue", "total revenues", "net sales"])
             gross_profit = extract_metric(income, ["gross margin", "gross profit"])
-            operating_income = extract_metric(income, ["operating income", "operating profit", "operating earnings"])
+            operating_income = extract_metric(income, ["operating income", "operating profit"])
             current_assets = extract_metric(balance, ["total current assets"])
             current_liab = extract_metric(balance, ["total current liabilities"])
-            total_debt = extract_metric(balance, ["total debt", "long-term debt", "term debt"])
-            stockholders_equity = extract_metric(balance, ["stockholders' equity", "shareholders' equity", "total equity"])
+            total_debt = extract_metric(balance, ["term debt", "long-term debt", "total debt"])
+            stockholders_equity = extract_metric(balance, ["total shareholders' equity", "stockholders' equity", "total equity"])
             
             # Calculate ratios
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue != 0) else "N/A"
@@ -178,7 +191,7 @@ if run_analysis or ticker:
             if data["gov_sections"]:
                 for heading, text_excerpt in data["gov_sections"].items():
                     with st.expander(f"📑 {heading}", expanded=True):
-                        st.text(text_excerpt[:2000] + ("\n\n[... continued in filing ...]" if len(text_excerpt) >= 2000 else ""))
+                        st.markdown(text_excerpt[:2500] + ("\n\n*... [continued in filing] ...*" if len(text_excerpt) >= 2500 else ""))
             else:
                 st.warning("No DEF 14A proxy filing located for this ticker.")
 
@@ -197,18 +210,18 @@ if run_analysis or ticker:
                     You are a senior equity research analyst preparing an institutional investment and corporate governance memo.
                     Company: {data['name']} ({ticker})
                     
-                    QUANTITATIVE METRICS EXTRACTED:
+                    QUANTITATIVE AUDITED METRICS:
                     - Gross Margin: {gm}
                     - Operating Margin: {om}
                     - Current Ratio: {cr}
                     - Debt-to-Equity: {de}
                     
                     DEF 14A CORPORATE GOVERNANCE EXCERPT:
-                    {data['proxy_raw']}
+                    {data['proxy_raw'][:5000]}
                     
                     DELIVERABLES:
                     Structure your memo in clean Markdown with the following sections:
-                    1. Executive Summary & Financial Quality (Interpret the margins, working capital liquidity, and capital structure).
+                    1. Executive Summary & Financial Quality (Interpret margins, working capital liquidity, and capital structure).
                     2. Corporate Governance Evaluation (Analyze executive compensation alignment, board independence, and shareholder proposals from the DEF 14A disclosures).
                     3. Strategic Capital Allocation & Risks (Evaluate R&D reinvestment, share repurchases/dividends, and operational risks).
                     """
