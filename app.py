@@ -44,20 +44,31 @@ if st.button("Generate AI Summary"):
                 client = genai.Client(api_key=api_key)
 
         with st.spinner("Analyzing financial data with Gemini..."):
-            # Send request with retry handling for high traffic
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    response = client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=f"You are a financial research assistant. Provide an executive summary with key financial insights for {company.name}:\n\n{filing_text[:max_chars]}",
-                    )
+            # Model fallback list if high-demand 503/429 occurs
+            models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+            response = None
+            last_error = None
+
+            for model_name in models_to_try:
+                for attempt in range(3):
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=f"You are a financial research assistant. Provide an executive summary with key financial insights for {company.name}:\n\n{filing_text[:max_chars]}",
+                        )
+                        break
+                    except Exception as err:
+                        last_error = err
+                        err_str = str(err)
+                        if ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str) and attempt < 2:
+                            time.sleep(2 ** (attempt + 1))  # Exponential backoff: 2s, 4s
+                        else:
+                            break
+                if response:
                     break
-                except Exception as err:
-                    if "503" in str(err) and attempt < max_retries - 1:
-                        time.sleep(2)
-                    else:
-                        raise err
+
+            if not response:
+                raise last_error
 
             st.success("Analysis Complete!")
             
