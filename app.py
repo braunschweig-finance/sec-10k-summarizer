@@ -1,8 +1,10 @@
+import io
 import re
 import time
 import warnings
 import pandas as pd
 import streamlit as st
+from docx import Document
 from edgar import Company, set_identity
 from google import genai
 
@@ -14,7 +16,7 @@ set_identity("Jacob Braunschweig jacob.braunschweig@gmail.com")
 
 # 2. Capital IQ / NetAdvantage Style Layout
 st.set_page_config(page_title="SEC Financial & Corporate Governance Terminal", layout="wide")
-st.title("🏛️ SEC Financial & Corporate Governance Terminal")
+st.title("🏛️️ SEC Financial & Corporate Governance Terminal")
 st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Deterministic Ratios & DEF 14A Governance Analysis")
 
 # Sidebar Controls
@@ -28,8 +30,9 @@ st.sidebar.markdown("""
 - **Data Ingestion:** SEC EDGAR REST / XBRL
 - **Financial Statements:** Form 10-K (in Millions)
 - **Quantitative Engine:** Deterministic Python (0 LLM Tokens)
-- **Governance Mining:** Form DEF 14A Proxy Statements
+- **Governance Mining:** Form DEF 14A Proxy Statements & Tables
 - **AI Synthesis Engine:** Google Gemini (Executive Memo)
+- **Deliverables Export:** Formatted Word (.docx) & Plaintext (.txt)
 """)
 
 def is_date_or_period_column(col_name):
@@ -45,7 +48,7 @@ def clean_statement_df(df):
     """
     Cleans XBRL statements to match Capital IQ:
     - Retains row label and numeric fiscal date periods
-    - Removes abstract category header rows that have no values
+    - Removes abstract category header rows that have no numeric values
     - Scales values to millions (in Millions)
     """
     if df is None or df.empty:
@@ -99,7 +102,6 @@ def clean_statement_df(df):
         def format_in_millions(x):
             try:
                 num = float(str(x).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                # Scale values greater than $10,000 to millions
                 if abs(num) >= 1000000:
                     scaled = num / 1000000.0
                     return f"${scaled:,.0f}"
@@ -164,21 +166,44 @@ def extract_metric(df, concepts, labels):
     return max(vals) if vals else None
 
 def clean_governance_text(raw_text):
-    """
-    Cleans raw SEC proxy text to remove running headers, footers, page numbers,
-    and boilerplate metadata artifacts.
-    """
+    """Cleans raw SEC proxy text to remove page artifacts and formatting noise."""
     if not raw_text:
         return ""
-    # Remove running SEC proxy header/footer lines
     text = re.sub(r"-+\s*Proxy Statement\s*\d{4}.*?-+", "", raw_text, flags=re.IGNORECASE)
     text = re.sub(r"Proxy Statement\s*\d{4}\s*\d{1,3}", "", text, flags=re.IGNORECASE)
     text = re.sub(r"DIRECTORS & GOVERNANCE CONTACTING.*?(?=[A-Z]{3,})", "", text, flags=re.IGNORECASE)
     text = re.sub(r"c/o Corporate Secretary.*?\d{5}", "", text, flags=re.IGNORECASE)
     text = re.sub(r"BY EMAIL MAIL.*?(?=[A-Z][a-z])", "", text)
-    # Collapse multiple spaces and line breaks
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+def build_word_memo(ticker_sym, company_nm, ratios_dict, gov_dict, memo_body):
+    """Generates a structured Word (.docx) Institutional Research Memo."""
+    doc = Document()
+    doc.add_heading(f"Institutional Research & Corporate Governance Brief", level=0)
+    doc.add_paragraph(f"Company: {company_nm} ({ticker_sym}) | Source: Audited SEC EDGAR 10-K & DEF 14A")
+    
+    doc.add_heading("1. Executive Summary & Audited Ratios", level=1)
+    table = doc.add_table(rows=1, cols=2)
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = "Financial Ratio"
+    hdr_cells[1].text = "Audited Metric Value"
+    for metric_name, val in ratios_dict.items():
+        row_cells = table.add_row().cells
+        row_cells[0].text = metric_name
+        row_cells[1].text = str(val)
+        
+    doc.add_heading("2. Qualitative Corporate Governance Disclosures (DEF 14A)", level=1)
+    for section_title, section_content in gov_dict.items():
+        doc.add_heading(section_title, level=2)
+        doc.add_paragraph(section_content[:1500] + ("..." if len(section_content) > 1500 else ""))
+        
+    doc.add_heading("3. Institutional Equity Research Synthesis", level=1)
+    doc.add_paragraph(memo_body)
+    
+    file_buffer = io.BytesIO()
+    doc.save(file_buffer)
+    return file_buffer.getvalue()
 
 @st.cache_data(show_spinner=False)
 def get_sec_data(ticker_symbol):
@@ -196,6 +221,7 @@ def get_sec_data(ticker_symbol):
         tenk_filings = company.get_filings(form="10-K")
         
         governance_sections = {}
+        proxy_tables = {}
         proxy_raw = ""
         proxy_url = ""
         tenk_url = tenk_filings[0].url if tenk_filings else ""
@@ -210,7 +236,21 @@ def get_sec_data(ticker_symbol):
                 
             proxy_lower = proxy_raw.lower()
             
-            # Skip first 10,000 characters to bypass the table of contents and cover notices
+            # Extract Structured Tables from Proxy if available
+            try:
+                raw_tables = latest_proxy.tables()
+                if raw_tables:
+                    for tbl in raw_tables[:15]:
+                        tbl_df = tbl.to_dataframe()
+                        tbl_str = tbl_df.to_string().lower()
+                        if "audit fees" in tbl_str and "tax fees" in tbl_str:
+                            proxy_tables["Audit & Non-Audit Fees Breakdown"] = tbl_df
+                        elif "summary compensation table" in tbl_str:
+                            proxy_tables["Executive Summary Compensation Table"] = tbl_df
+            except Exception:
+                pass
+            
+            # Skip first 12,000 characters to bypass table of contents
             body_start = 12000 if len(proxy_raw) > 20000 else 0
             body_text = proxy_raw[body_start:]
             body_lower = proxy_lower[body_start:]
@@ -255,6 +295,7 @@ def get_sec_data(ticker_symbol):
             "raw_income": raw_income,
             "raw_balance": raw_balance,
             "gov_sections": governance_sections,
+            "gov_tables": proxy_tables,
             "proxy_raw": clean_governance_text(proxy_raw[:12000]),
             "proxy_url": proxy_url,
             "tenk_url": tenk_url
@@ -373,6 +414,13 @@ if run_analysis or ticker:
             col2.metric("Operating Margin", om)
             col3.metric("Current Ratio", cr)
             col4.metric("Debt-to-Equity (Total Leverage)", de)
+            
+            ratios_summary = {
+                "Gross Margin": gm,
+                "Operating Margin": om,
+                "Current Ratio": cr,
+                "Debt-to-Equity (Total Leverage)": de
+            }
 
         # TAB 3: CORPORATE GOVERNANCE (DEF 14A)
         with tab_gov:
@@ -390,13 +438,19 @@ if run_analysis or ticker:
                 
             st.markdown("---")
 
+            # Structured Tables if extracted from proxy
+            if data.get("gov_tables"):
+                st.markdown("#### Audited Governance Tables")
+                for tbl_title, tbl_df in data["gov_tables"].items():
+                    with st.expander(f"📊 {tbl_title}", expanded=True):
+                        st.dataframe(tbl_df, use_container_width=True)
+
             # Curated Institutional Disclosure Cards
             if data["gov_sections"]:
                 for heading, text_body in data["gov_sections"].items():
                     with st.container(border=True):
                         st.subheader(f"📑 {heading}")
-                        # Display clean text in structured presentation
-                        st.write(text_body[:2000] + ("..." if len(text_body) >= 2000 else ""))
+                        st.write(text_body[:2200] + ("..." if len(text_body) >= 2200 else ""))
             else:
                 st.warning("No DEF 14A proxy filing located for this ticker.")
 
@@ -458,9 +512,28 @@ if run_analysis or ticker:
                         st.markdown(response.text)
                         if hasattr(response, "usage_metadata"):
                             st.info(f"Tokens Consumed — Input: {response.usage_metadata.prompt_token_count} | Output: {response.usage_metadata.candidates_token_count}")
-                        st.download_button(
+                        
+                        col_dl1, col_dl2 = st.columns(2)
+                        
+                        # Plain text download
+                        col_dl1.download_button(
                             label="📥 Download Research Memo (.txt)",
                             data=response.text,
                             file_name=f"{ticker}_Institutional_Memo.txt",
                             mime="text/plain"
+                        )
+                        
+                        # Formatted Word Document (.docx) download
+                        docx_bytes = build_word_memo(
+                            ticker_sym=ticker,
+                            company_nm=data['name'],
+                            ratios_dict=ratios_summary,
+                            gov_dict=data['gov_sections'],
+                            memo_body=response.text
+                        )
+                        col_dl2.download_button(
+                            label="📄 Download Institutional Memo (.docx)",
+                            data=docx_bytes,
+                            file_name=f"{ticker}_Institutional_Research_Brief.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
