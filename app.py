@@ -74,8 +74,11 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_metric_strict(df, exact_concepts, exact_labels, fallback_substrings=None):
-    """Extracts true consolidated statement totals, preventing sub-item substring collisions."""
+def extract_consolidated_metric(df, standard_concepts, exact_labels):
+    """
+    Extracts true consolidated statement totals by matching exact concept/label
+    and taking the maximum value to avoid divisional sub-segments (e.g. Machinery vs Consolidated).
+    """
     if df is None or df.empty:
         return None
         
@@ -84,7 +87,7 @@ def extract_metric_strict(df, exact_concepts, exact_labels, fallback_substrings=
         return None
     latest_col = date_cols[0]
 
-    # Filter out dimensional breakdown segments if present
+    # Exclude dimensional rows if tagged
     target_df = df.copy()
     if "dimension" in target_df.columns:
         target_df = target_df[~target_df["dimension"].astype(bool)]
@@ -93,58 +96,44 @@ def extract_metric_strict(df, exact_concepts, exact_labels, fallback_substrings=
     if target_df.empty:
         target_df = df
 
-    # Helper function to parse numeric cell
-    def parse_cell(val):
-        if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
-            try:
-                n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                if abs(n) > 1000:
-                    return n
-            except Exception:
-                pass
-        return None
+    matched_values = []
 
-    # Priority 1: Exact US-GAAP concept suffix
-    if "concept" in target_df.columns:
-        for ec in exact_concepts:
-            subset = target_df[target_df["concept"].astype(str).str.lower().str.endswith(ec.lower())]
+    # Priority 1: Match standard or raw concepts
+    concept_cols = [c for c in ["standard_concept", "concept"] if c in target_df.columns]
+    for c_col in concept_cols:
+        for sc in standard_concepts:
+            subset = target_df[target_df[c_col].astype(str).str.lower().str.endswith(sc.lower())]
             for _, r in subset.iterrows():
-                val = parse_cell(r[latest_col])
-                if val is not None:
-                    return val
+                val = r[latest_col]
+                if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+                    try:
+                        n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                        if abs(n) > 1000:
+                            matched_values.append(n)
+                    except Exception:
+                        pass
 
-    # Priority 2: Standard Concept (edgartools taxonomy)
-    if "standard_concept" in target_df.columns:
-        for ec in exact_concepts:
-            subset = target_df[target_df["standard_concept"].astype(str).str.lower() == ec.lower()]
-            for _, r in subset.iterrows():
-                val = parse_cell(r[latest_col])
-                if val is not None:
-                    return val
-
-    # Priority 3: Exact Label Match
+    # Priority 2: Match exact label (rejects 'other', 'prepaid', 'intersegment')
     label_col = "label" if "label" in target_df.columns else None
     if label_col:
         for el in exact_labels:
             for _, r in target_df.iterrows():
                 row_label = str(r[label_col]).lower().strip().rstrip(":")
-                if row_label == el.lower().strip():
-                    val = parse_cell(r[latest_col])
-                    if val is not None:
-                        return val
+                if any(bad in row_label for bad in ["other", "prepaid", "intersegment", "elimination", "par value"]):
+                    continue
+                if row_label == el.lower().strip() or row_label.startswith(el.lower().strip()):
+                    val = r[latest_col]
+                    if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+                        try:
+                            n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                            if abs(n) > 1000:
+                                matched_values.append(n)
+                        except Exception:
+                            pass
 
-    # Priority 4: Fallback Substring Match (with safety exclusions)
-    if fallback_substrings and label_col:
-        for sb in fallback_substrings:
-            for _, r in target_df.iterrows():
-                row_label = str(r[label_col]).lower().strip()
-                if sb.lower() in row_label:
-                    if any(bad in row_label for bad in ["other", "prepaid", "intersegment", "elimination", "par value"]):
-                        continue
-                    val = parse_cell(r[latest_col])
-                    if val is not None:
-                        return val
-
+    # The consolidated total across multi-column divisional statements is the maximum value
+    if matched_values:
+        return max(matched_values)
     return None
 
 @st.cache_data(show_spinner=False)
@@ -248,81 +237,82 @@ if run_analysis or ticker:
             raw_bal = data.get("raw_balance")
             
             # 1. Total Revenue
-            revenue = extract_metric_strict(
+            revenue = extract_consolidated_metric(
                 raw_inc,
                 ["SalesRevenueNet", "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
-                ["Total sales and revenues", "Total net sales", "Total revenues", "Revenue"],
-                ["sales and revenues", "revenues", "sales"]
+                ["Total sales and revenues", "Total net sales", "Total revenues", "Revenue"]
             )
             # 2. Cost of Goods / Sales
-            cogs = extract_metric_strict(
+            cogs = extract_consolidated_metric(
                 raw_inc,
                 ["CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
-                ["Cost of goods sold", "Cost of sales", "Cost of products sold"],
-                ["cost of goods", "cost of sales"]
+                ["Cost of goods sold", "Cost of sales", "Cost of products sold"]
             )
             # 3. Gross Profit
-            gross_profit = extract_metric_strict(
+            gross_profit = extract_consolidated_metric(
                 raw_inc,
                 ["GrossProfit"],
-                ["Gross profit", "Gross margin"],
-                ["gross profit"]
+                ["Gross profit", "Gross margin"]
             )
             if not gross_profit and revenue and cogs:
                 gross_profit = revenue - cogs
 
             # 4. Operating Income
-            operating_income = extract_metric_strict(
+            operating_income = extract_consolidated_metric(
                 raw_inc,
                 ["OperatingIncomeLoss"],
-                ["Operating profit", "Operating income", "Segment operating profit"],
-                ["operating income", "operating profit", "earnings before income taxes"]
+                ["Operating profit", "Operating income", "Segment operating profit", "Earnings before income taxes"]
             )
             
-            # 5. Current Assets (Total only)
-            current_assets = extract_metric_strict(
+            # 5. Current Assets (Consolidated Total)
+            current_assets = extract_consolidated_metric(
                 raw_bal,
                 ["AssetsCurrent"],
-                ["Total current assets", "Current assets"],
-                ["total current assets"]
+                ["Total current assets", "Current assets"]
             )
             
-            # 6. Current Liabilities (Total only)
-            current_liab = extract_metric_strict(
+            # 6. Current Liabilities (Consolidated Total)
+            current_liab = extract_consolidated_metric(
                 raw_bal,
                 ["LiabilitiesCurrent"],
-                ["Total current liabilities", "Current liabilities"],
-                ["total current liabilities"]
+                ["Total current liabilities", "Current liabilities"]
             )
             
-            # 7. Total Debt (Short-Term + Long-Term)
-            st_debt = extract_metric_strict(
+            # 7. Total Debt (Sum of short-term borrowings + long-term debt noncurrent)
+            st_debt = extract_consolidated_metric(
                 raw_bal,
                 ["DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
-                ["Short-term borrowings", "Short-term debt", "Commercial paper", "Current portion of long-term debt"],
-                ["short-term borrowings", "short-term debt"]
+                ["Short-term borrowings", "Short-term debt", "Commercial paper", "Current portion of long-term debt"]
             ) or 0
             
-            lt_debt = extract_metric_strict(
+            lt_debt = extract_consolidated_metric(
                 raw_bal,
                 ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermDebt"],
-                ["Long-term debt due after one year", "Long-term debt, including current maturities", "Long-term debt", "Term debt"],
-                ["long-term debt due after one year", "long-term debt"]
+                ["Long-term debt due after one year", "Long-term debt, including current maturities", "Long-term debt", "Term debt"]
             ) or 0
             
-            total_debt = st_debt + lt_debt
-            
-            # 8. Stockholders' Equity (Total only)
-            stockholders_equity = extract_metric_strict(
+            # If total debt lines are reported as a single consolidated row
+            total_debt_consolidated = extract_consolidated_metric(
                 raw_bal,
-                ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"],
-                ["shareholders' equity", "stockholders' equity"]
+                ["Debt", "TotalDebt"],
+                ["Total debt"]
             )
             
-            # Fallbacks for Total Liabilities / Accounting Identity
-            total_assets = extract_metric_strict(raw_bal, ["Assets"], ["Total assets", "Assets"], ["total assets"])
-            total_liab = extract_metric_strict(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"], ["total liabilities"])
+            if total_debt_consolidated and total_debt_consolidated > (st_debt + lt_debt):
+                total_debt = total_debt_consolidated
+            else:
+                total_debt = st_debt + lt_debt
+
+            # 8. Stockholders' Equity (Consolidated Total)
+            stockholders_equity = extract_consolidated_metric(
+                raw_bal,
+                ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"]
+            )
+            
+            # Accounting identity fallback
+            total_assets = extract_consolidated_metric(raw_bal, ["Assets"], ["Total assets", "Assets"])
+            total_liab = extract_consolidated_metric(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"])
             
             if total_debt == 0 and total_liab:
                 total_debt = total_liab
