@@ -25,7 +25,6 @@ run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 def is_date_or_period_column(col_name):
     """Detects whether a column represents an audited fiscal reporting period (e.g., 2025-12-31 (FY))."""
     s = str(col_name).strip()
-    # Matches strings starting with 4-digit years (2020-2035) or containing FY/CY
     if re.search(r"\b20[2-3][0-9]", s):
         return True
     if any(tag in s.upper() for tag in ["(FY)", "(CY)", "Q1", "Q2", "Q3", "Q4"]):
@@ -33,22 +32,19 @@ def is_date_or_period_column(col_name):
     return False
 
 def clean_statement_df(df):
-    """Strictly retains row label and numeric fiscal date period columns."""
+    """Strictly retains row label and numeric fiscal date period columns, formatting numbers with commas."""
     if df is None or df.empty:
         return None
     
-    # 1. Find line-item label column
     label_col = None
     for cand in ["label", "standard_concept", "concept"]:
         if cand in df.columns:
             label_col = cand
             break
             
-    # 2. Filter exclusively for audited date/period columns
     period_cols = [c for c in df.columns if is_date_or_period_column(c)]
     
     if not period_cols:
-        # Fallback: keep non-technical string columns if regex finds no match
         meta_blacklist = {
             "concept", "standard_concept", "level", "abstract", "dimension",
             "dimension_axis", "dimension_member", "dimension_label", 
@@ -64,6 +60,18 @@ def clean_statement_df(df):
         cleaned = cleaned.set_index("Line Item")
     else:
         cleaned = df[period_cols].copy()
+
+    # Format large integers/floats with thousands commas for readability
+    for col in cleaned.columns:
+        def format_val(x):
+            try:
+                num = float(str(x).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                if abs(num) >= 1000:
+                    return f"{num:,.0f}"
+                return x
+            except Exception:
+                return x
+        cleaned[col] = cleaned[col].apply(format_val)
         
     return cleaned
 
@@ -74,12 +82,13 @@ def extract_metric(df, keywords):
     for idx in df.index:
         row_str = str(idx).lower()
         if any(kw.lower() in row_str for kw in keywords):
-            series = df.loc[idx]
-            if isinstance(series, pd.DataFrame):
-                series = series.iloc[0]
+            row_data = df.loc[idx]
+            # Handle duplicate row labels
+            if isinstance(row_data, pd.DataFrame):
+                row_data = row_data.iloc[0]
             # Search backward from the latest reported period
-            for col in series.index:
-                val = series[col]
+            for col in reversed(row_data.index):
+                val = row_data[col]
                 if pd.notna(val) and val != "" and str(val).lower() != "none":
                     try:
                         clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
@@ -96,9 +105,9 @@ def get_sec_data(ticker_symbol):
         
         # 1. Direct Financial Statements via XBRL
         financials = company.get_financials()
-        income_df = clean_statement_df(financials.income_statement().to_dataframe()) if financials else None
-        balance_df = clean_statement_df(financials.balance_sheet().to_dataframe()) if financials else None
-        cashflow_df = clean_statement_df(financials.cash_flow_statement().to_dataframe()) if financials else None
+        raw_income = financials.income_statement().to_dataframe() if financials else None
+        raw_balance = financials.balance_sheet().to_dataframe() if financials else None
+        raw_cashflow = financials.cash_flow_statement().to_dataframe() if financials else None
 
         # 2. Extract Text from Form DEF 14A (Proxy Statement)
         proxy_filings = company.get_filings(form="DEF 14A")
@@ -134,9 +143,11 @@ def get_sec_data(ticker_symbol):
 
         return {
             "name": company.name,
-            "income": income_df,
-            "balance": balance_df,
-            "cashflow": cashflow_df,
+            "income": clean_statement_df(raw_income),
+            "balance": clean_statement_df(raw_balance),
+            "cashflow": clean_statement_df(raw_cashflow),
+            "raw_income": raw_income,
+            "raw_balance": raw_balance,
             "gov_sections": governance_sections,
             "proxy_raw": proxy_raw[:8000]
         }, None
@@ -186,30 +197,32 @@ if run_analysis or ticker:
             st.markdown("### Deterministic Ratio Analysis")
             st.caption("Computed via Python from audited line items (zero AI token consumption).")
             
-            income = data["income"]
-            balance = data["balance"]
+            # Use raw unformatted DataFrames for clean float calculations
+            inc_df = clean_statement_df(data.get("raw_income"))
+            bal_df = clean_statement_df(data.get("raw_balance"))
             
             # Universal Revenue and Cost Parsing
-            revenue = extract_metric(income, ["total sales and revenues", "total net sales", "total revenues", "revenue", "sales"])
-            cost_of_goods = extract_metric(income, ["cost of goods sold", "cost of sales", "cost of products sold", "operating costs"])
-            gross_profit = extract_metric(income, ["gross margin", "gross profit"])
+            revenue = extract_metric(inc_df, ["total sales and revenues", "total net sales", "total revenues", "revenue", "sales"])
+            cost_of_goods = extract_metric(inc_df, ["cost of goods sold", "cost of sales", "cost of products sold", "operating costs"])
+            gross_profit = extract_metric(inc_df, ["gross margin", "gross profit"])
             
             if not gross_profit and revenue and cost_of_goods:
                 gross_profit = revenue - cost_of_goods
                 
-            operating_income = extract_metric(income, ["operating income", "operating profit", "operating earnings"])
-            current_assets = extract_metric(balance, ["total current assets"])
-            current_liab = extract_metric(balance, ["total current liabilities"])
+            operating_income = extract_metric(inc_df, ["operating income", "operating profit", "operating earnings"])
+            current_assets = extract_metric(bal_df, ["total current assets"])
+            current_liab = extract_metric(bal_df, ["total current liabilities"])
             
-            # Broad Sector Debt Parsing (Handles Industrials, Financial Products & Tech)
-            st_debt = extract_metric(balance, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings", "notes payable"]) or 0
-            lt_debt = extract_metric(balance, ["long-term debt due after one year", "long-term debt", "term debt"]) or 0
-            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric(balance, ["total debt", "total liabilities", "liabilities"])
+            # Robust Debt Parsing across Industrials and Tech
+            st_debt = extract_metric(bal_df, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings", "notes payable"]) or 0
+            lt_debt = extract_metric(bal_df, ["long-term debt due after one year", "long-term debt", "term debt"]) or 0
+            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric(bal_df, ["total liabilities", "liabilities"])
             
-            # Stockholders' equity search
-            stockholders_equity = extract_metric(balance, [
-                "shareholders' equity", "stockholders' equity", "total equity", 
-                "caterpillar", "total stockholders' equity", "total shareholders' equity"
+            # Robust Stockholders' Equity resolution (CAT specific: "caterpillar shareholders' equity")
+            stockholders_equity = extract_metric(bal_df, [
+                "caterpillar shareholders' equity", "total shareholders' equity", 
+                "total stockholders' equity", "shareholders' equity", 
+                "stockholders' equity", "total equity", "common stockholders' equity"
             ])
             
             # Calculate ratios
