@@ -45,7 +45,7 @@ if st.button("Generate AI Summary"):
 
         with st.spinner("Analyzing financial data with Gemini..."):
             # Model fallback list if high-demand 503/429 occurs
-            models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+            models_to_try = ["gemini-3.8-flash", "gemini-3.6-flash"]
             response = None
             last_error = None
 
