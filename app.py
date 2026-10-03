@@ -18,27 +18,22 @@ st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Dynamic Ratios & DEF 1
 
 # Sidebar Controls
 st.sidebar.header("Terminal Navigation")
-ticker = st.sidebar.text_input("Enter Ticker Symbol:", "AAPL").upper().strip()
+ticker = st.sidebar.text_input("Enter Ticker Symbol:", "CAT").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
 def clean_statement_df(df):
     """Filters metadata columns and prepares audited numeric tables."""
     if df is None or df.empty:
         return None
-    # Strip raw taxonomy and boolean/structural flags
     cols_to_drop = [c for c in ["concept", "standard_concept", "level", "abstract", "dimension", "is_breakdown"] if c in df.columns]
     cleaned = df.drop(columns=cols_to_drop)
     
-    # Filter out pure abstract parent rows if present
-    if "abstract" in df.columns:
-        cleaned = cleaned[~df["abstract"].astype(bool)]
-        
     if "label" in cleaned.columns:
         cleaned = cleaned.set_index("label")
     return cleaned
 
 def extract_metric(df, keywords):
-    """Finds the most recent valid financial dollar value from target rows."""
+    """Searches statement index for keywords and extracts the latest reported numeric value."""
     if df is None or df.empty:
         return None
     for idx in df.index:
@@ -47,13 +42,13 @@ def extract_metric(df, keywords):
             series = df.loc[idx]
             if isinstance(series, pd.DataFrame):
                 series = series.iloc[0]
-            # Search from most recent reported period column backwards
+            # Search backward from the latest reported period
             for col in series.index:
                 val = series[col]
                 if pd.notna(val) and val != "":
                     try:
                         clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                        if abs(clean_num) > 1000:  # Ensures it's an actual reported dollar figure, not a flag or ratio
+                        if abs(clean_num) > 1000:
                             return clean_num
                     except (ValueError, TypeError):
                         continue
@@ -86,8 +81,8 @@ def get_sec_data(ticker_symbol):
             
             section_targets = {
                 "Executive Compensation & Pay Analysis": ["executive compensation", "compensation discussion and analysis", "summary compensation table"],
-                "Board of Directors & Committee Independence": ["board of directors", "director independence", "board committees and composition"],
-                "Shareholder Proposals & Voting Items": ["shareholder proposal", "proposal 1", "matters to be voted on", "items of business"]
+                "Board of Directors & Committee Independence": ["board of directors", "director independence", "board committees and composition", "directors & governance"],
+                "Shareholder Proposals & Voting Items": ["shareholder proposal", "proposal 1", "matters to be voted on", "shareholder voting matters"]
             }
             
             for section_title, keywords in section_targets.items():
@@ -159,14 +154,25 @@ if run_analysis or ticker:
             income = data["income"]
             balance = data["balance"]
             
-            # Extract line items dynamically
-            revenue = extract_metric(income, ["total net sales", "revenue", "total revenues", "net sales"])
+            # Universal Revenue and Cost Parsing
+            revenue = extract_metric(income, ["total sales and revenues", "total net sales", "total revenues", "revenue", "sales"])
+            cost_of_goods = extract_metric(income, ["cost of goods sold", "cost of sales", "cost of products sold"])
             gross_profit = extract_metric(income, ["gross margin", "gross profit"])
-            operating_income = extract_metric(income, ["operating income", "operating profit"])
+            
+            # If explicit Gross Profit is omitted, calculate as Revenue - COGS
+            if not gross_profit and revenue and cost_of_goods:
+                gross_profit = revenue - cost_of_goods
+                
+            operating_income = extract_metric(income, ["operating income", "operating profit", "operating earnings"])
             current_assets = extract_metric(balance, ["total current assets"])
             current_liab = extract_metric(balance, ["total current liabilities"])
-            total_debt = extract_metric(balance, ["term debt", "long-term debt", "total debt"])
-            stockholders_equity = extract_metric(balance, ["total shareholders' equity", "stockholders' equity", "total equity"])
+            
+            # Multi-sector Debt and Equity extraction
+            short_debt = extract_metric(balance, ["short-term debt", "commercial paper", "current portion of long-term debt"]) or 0
+            long_debt = extract_metric(balance, ["long-term debt", "term debt", "total debt"]) or 0
+            total_debt = short_debt + long_debt if (short_debt + long_debt) > 0 else extract_metric(balance, ["debt", "total liabilities"])
+            
+            stockholders_equity = extract_metric(balance, ["total shareholders' equity", "total stockholders' equity", "shareholders' equity", "stockholders' equity", "total equity"])
             
             # Calculate ratios
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue != 0) else "N/A"
