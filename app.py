@@ -14,7 +14,7 @@ set_identity("Jacob Braunschweig jacob.braunschweig@gmail.com")
 
 # 2. Page Configuration (NetAdvantage / Capital IQ Style)
 st.set_page_config(page_title="SEC Financial & Corporate Governance Terminal", layout="wide")
-st.title("🏛️ SEC Financial & Corporate Governance Terminal")
+st.title("🏛️️ SEC Financial & Corporate Governance Terminal")
 st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Dynamic Ratios & DEF 14A Governance")
 
 # Sidebar Controls
@@ -92,11 +92,15 @@ def extract_metric_raw(df, keywords):
     if not date_cols:
         return None
 
-    for _, row in df.iterrows():
-        row_label = str(row[label_col]).lower()
+    # Search through rows in reverse to favor totals and consolidated summary rows
+    for idx in reversed(df.index):
+        row_label = str(df.loc[idx, label_col]).lower().strip()
         if any(kw.lower() in row_label for kw in keywords):
-            for col in date_cols:
-                val = row[col]
+            row_vals = df.loc[idx, date_cols]
+            # Handle possible series vs dataframe row slicing
+            if isinstance(row_vals, pd.DataFrame):
+                row_vals = row_vals.iloc[0]
+            for val in row_vals:
                 if pd.notna(val) and val != "" and str(val).lower() != "none":
                     try:
                         clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
@@ -221,16 +225,17 @@ if run_analysis or ticker:
             if not gross_profit and revenue and cost_of_goods:
                 gross_profit = revenue - cost_of_goods
                 
-            # Universal Operating Income (handles ADM "segment operating profit" & industrial terminology)
             operating_income = extract_metric_raw(raw_inc, [
                 "segment operating profit", "operating profit", "operating income", 
                 "earnings before income taxes", "operating earnings"
             ])
             
+            total_assets = extract_metric_raw(raw_bal, ["total assets", "assets"])
             current_assets = extract_metric_raw(raw_bal, ["total current assets"])
             current_liab = extract_metric_raw(raw_bal, ["total current liabilities"])
+            total_liab = extract_metric_raw(raw_bal, ["total liabilities", "liabilities"])
             
-            # Universal Debt Parsing (handles short borrowings, long debt, term facilities)
+            # Universal Debt Resolution (Short + Long Debt or Total Liabilities proxy)
             st_debt = extract_metric_raw(raw_bal, [
                 "short-term debt", "short-term borrowings", "commercial paper", 
                 "current portion of long-term debt", "notes payable"
@@ -239,15 +244,19 @@ if run_analysis or ticker:
                 "long-term debt, including current maturities", "long-term debt due after one year", 
                 "long-term debt", "term debt"
             ]) or 0
-            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric_raw(raw_bal, ["total debt", "total liabilities", "liabilities"])
+            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else total_liab
             
-            # Universal Equity Parsing (handles ADM, CAT, and tech variations)
+            # Universal Equity Resolution (Handles specific company prefixes or standard identity fallback)
             stockholders_equity = extract_metric_raw(raw_bal, [
                 "total shareholders' equity", "total stockholders' equity", 
                 "shareholders' equity", "stockholders' equity", "total equity", 
                 "adm shareholders' equity", "caterpillar shareholders' equity", 
                 "common stockholders' equity"
             ])
+            
+            # Accounting Identity Fallback: Equity = Assets - Liabilities
+            if not stockholders_equity and total_assets and total_liab:
+                stockholders_equity = total_assets - total_liab
             
             # Calculate ratios
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue != 0) else "N/A"
