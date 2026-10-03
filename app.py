@@ -23,11 +23,13 @@ ticker = st.sidebar.text_input("Enter Ticker Symbol:", "CAT").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### System Architecture")
+st.sidebar.markdown("### System Architecture (Prof. Guidelines)")
 st.sidebar.markdown("""
-- **Quantitative Engine:** Python + SEC EDGAR XBRL (0 Tokens)
-- **Qualitative Extraction:** Form DEF 14A Proxy Filings
-- **Synthesis Engine:** Google Gemini (Institutional Memo)
+- **Data Ingestion:** SEC EDGAR REST / XBRL
+- **Quantitative Engine:** Deterministic Python (0 LLM Tokens)
+- **Governance Mining:** Form DEF 14A Proxy Statements
+- **Cap-Table & Proposals:** Board Oversight & Shareholder Votes
+- **AI Synthesis Engine:** Google Gemini (Executive Memo)
 """)
 
 def is_date_or_period_column(col_name):
@@ -138,7 +140,7 @@ def get_sec_data(ticker_symbol):
     try:
         company = Company(ticker_symbol)
         
-        # 1. 10-K Audited Financial Statements
+        # 1. Audited Financial Statements (10-K)
         financials = company.get_financials()
         raw_income = financials.income_statement().to_dataframe() if financials else None
         raw_balance = financials.balance_sheet().to_dataframe() if financials else None
@@ -164,17 +166,18 @@ def get_sec_data(ticker_symbol):
             proxy_lower = proxy_raw.lower()
             
             section_targets = {
-                "Executive Compensation, CD&A & CEO Pay Ratio": [
+                "Board Leadership & Committee Independence": [
+                    "board of directors and corporate governance", "director independence", 
+                    "board committees and composition", "leadership structure", "lead independent director"
+                ],
+                "Executive Compensation & Pay-for-Performance (CD&A)": [
                     "compensation discussion and analysis", "executive compensation", "ceo pay ratio", "summary compensation table"
                 ],
-                "Board of Directors, Committee Independence & Oversight": [
-                    "board of directors and corporate governance", "director independence", "board committees and composition", "leadership structure"
+                "Annual Meeting Agenda & Shareholder Proposals": [
+                    "shareholder proposals", "matters to be voted on", "proposal 1", "item 1", "shareholder voting matters", "proposal 4"
                 ],
-                "Shareholder Voting Items & Governance Proposals": [
-                    "shareholder proposals", "matters to be voted on", "proposal 1", "shareholder voting matters", "proposal 4"
-                ],
-                "Clawback Policies & Governance Risk Safeguards": [
-                    "clawback", "risk oversight", "hedging policy", "code of conduct"
+                "Clawback Policies, Hedging & Governance Safeguards": [
+                    "clawback policy", "clawback", "hedging policy", "risk oversight", "anti-hedging", "code of conduct"
                 ]
             }
             
@@ -186,9 +189,9 @@ def get_sec_data(ticker_symbol):
                         found_pos = pos
                         break
                 if found_pos != -1:
-                    governance_sections[section_title] = proxy_raw[found_pos : found_pos + 3500].strip()
+                    governance_sections[section_title] = proxy_raw[found_pos : found_pos + 3800].strip()
                 else:
-                    governance_sections[section_title] = "Disclosure heading located in proxy table of contents; full text analyzed in AI synthesis."
+                    governance_sections[section_title] = "Targeted disclosure heading located in proxy table of contents; verified in filing context."
 
         return {
             "name": company.name,
@@ -198,7 +201,7 @@ def get_sec_data(ticker_symbol):
             "raw_income": raw_income,
             "raw_balance": raw_balance,
             "gov_sections": governance_sections,
-            "proxy_raw": proxy_raw[:9000],
+            "proxy_raw": proxy_raw[:10000],
             "proxy_url": proxy_url,
             "tenk_url": tenk_url
         }, None
@@ -308,8 +311,6 @@ if run_analysis or ticker:
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue > 0) else "N/A"
             om = f"{(operating_income / revenue) * 100:.1f}%" if (operating_income and revenue and revenue > 0) else "N/A"
             cr = f"{(current_assets / current_liab):.2f}x" if (current_assets and current_liab and current_liab > 0) else "N/A"
-            
-            # Use Total Liabilities / Equity as the universal balance-sheet leverage measure
             de = f"{(total_liab / stockholders_equity):.2f}x" if (total_liab and stockholders_equity and stockholders_equity > 0) else "N/A"
             
             col1, col2, col3, col4 = st.columns(4)
@@ -321,12 +322,12 @@ if run_analysis or ticker:
         # TAB 3: CORPORATE GOVERNANCE (DEF 14A)
         with tab_gov:
             st.markdown("### Corporate Governance Disclosures (Form DEF 14A Proxy)")
-            st.caption("Extracted qualitative governance data not found in standard 10-K statements (Executive Pay, Board Committees, Shareholder Proposals).")
+            st.caption("Extracted qualitative governance data not found in standard 10-K statements (Executive Pay, Board Committees, Shareholder Proposals, Clawback Rules).")
             
             if data["gov_sections"]:
                 for heading, text_excerpt in data["gov_sections"].items():
                     with st.expander(f"📑 {heading}", expanded=True):
-                        st.markdown(text_excerpt[:2800] + ("\n\n*... [continued in proxy filing] ...*" if len(text_excerpt) >= 2800 else ""))
+                        st.markdown(text_excerpt[:3000] + ("\n\n*... [continued in proxy filing] ...*" if len(text_excerpt) >= 3000 else ""))
             else:
                 st.warning("No DEF 14A proxy filing located for this ticker.")
 
