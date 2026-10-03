@@ -103,7 +103,7 @@ def extract_metric(df, concepts, labels):
         target_df = df
 
     vals = []
-    # 1. Concept check
+    # Concept check
     for c_col in ["standard_concept", "concept"]:
         if c_col in target_df.columns:
             for c in concepts:
@@ -113,7 +113,7 @@ def extract_metric(df, concepts, labels):
                     if n is not None:
                         vals.append(n)
 
-    # 2. Label check
+    # Label check
     if "label" in target_df.columns:
         for lbl in labels:
             for _, r in target_df.iterrows():
@@ -127,53 +127,71 @@ def extract_metric(df, concepts, labels):
 
     return max(vals) if vals else None
 
-def extract_total_debt(df):
+def calculate_debt_and_equity(bal_df):
     """
-    Computes total debt across all balance sheet segments.
-    Sums distinct short-term borrowings and long-term debt lines, avoiding double-counting total rows.
+    Computes total consolidated debt and total stockholders' equity accurately across both
+    pure-operating companies (AAPL) and multi-division/captive-finance companies (CAT, ADM).
     """
-    if df is None or df.empty:
-        return None
+    if bal_df is None or bal_df.empty:
+        return None, None
         
-    date_cols = [c for c in df.columns if is_date_or_period_column(c)]
+    date_cols = [c for c in bal_df.columns if is_date_or_period_column(c)]
     if not date_cols:
-        return None
+        return None, None
     latest_col = date_cols[0]
 
-    # First check if there is an explicit single 'Total Debt' consolidated line
-    explicit_total = extract_metric(df, ["TotalDebt", "DebtInstrumentCarryingAmount"], ["Total debt"])
-    if explicit_total and explicit_total > 5000:
-        return explicit_total
+    # 1. Total Stockholders' Equity
+    equity = extract_metric(
+        bal_df,
+        ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+        ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"]
+    )
+    
+    total_assets = extract_metric(bal_df, ["Assets"], ["Total assets", "Assets"])
+    total_liab = extract_metric(bal_df, ["Liabilities"], ["Total liabilities", "Liabilities"])
+    
+    if (not equity or equity <= 0) and total_assets and total_liab:
+        equity = total_assets - total_liab
 
-    # Otherwise aggregate funded debt components (Short-term debt + Long-term debt across operating & finance divisions)
-    debt_sum = 0.0
-    seen_indices = set()
-    label_col = "label" if "label" in df.columns else None
+    # 2. Total Debt Calculation
+    # First: Check for explicit consolidated Total Debt line
+    explicit_total_debt = extract_metric(bal_df, ["TotalDebt", "DebtInstrumentCarryingAmount"], ["Total debt"])
+    if explicit_total_debt and explicit_total_debt > 10000:
+        return explicit_total_debt, equity
 
-    for idx, r in df.iterrows():
-        row_str = (str(r[label_col]) if label_col else "").lower()
-        concept_str = (str(r.get("concept", "")) + " " + str(r.get("standard_concept", ""))).lower()
-        full_text = f"{row_str} {concept_str}"
+    # Second: Sum all funded debt line items across all reported columns/segments
+    # Identifies short-term debt and long-term debt rows explicitly
+    st_debt_sum = 0.0
+    lt_debt_sum = 0.0
+    
+    label_col = "label" if "label" in bal_df.columns else None
 
-        # Match legitimate debt lines
-        is_debt_line = any(term in full_text for term in [
-            "short-term borrowings", "short-term debt", "commercial paper", 
-            "long-term debt due after one year", "long-term debt, including", "long-term debt",
-            "term debt", "notes payable", "debtcurrent", "longtermdebtnoncurrent"
-        ])
+    for _, r in bal_df.iterrows():
+        lbl = (str(r[label_col]) if label_col else "").lower()
+        cpt = (str(r.get("concept", "")) + " " + str(r.get("standard_concept", ""))).lower()
+        line_text = f"{lbl} {cpt}"
+        
+        # Exclude aggregate summary lines or equity/tax descriptions
+        if any(bad in line_text for bad in ["total debt", "total liabilities", "interest", "tax", "fair value", "derivative", "intersegment"]):
+            continue
+            
+        val = parse_num(r[latest_col])
+        if not val or val <= 0:
+            continue
+            
+        # Match short-term borrowings
+        if any(term in line_text for term in ["short-term borrowings", "short-term debt", "commercial paper", "current portion of long-term debt", "debtcurrent"]):
+            st_debt_sum += val
+        # Match long-term debt
+        elif any(term in line_text for term in ["long-term debt due after one year", "long-term debt, including current", "long-term debt", "term debt", "longtermdebtnoncurrent"]):
+            lt_debt_sum += val
 
-        # Exclude aggregate lines, interest lines, and tax lines
-        is_invalid = any(bad in full_text for bad in [
-            "total debt", "interest", "tax", "fair value", "fair_value", "guarantee", "intersegment", "elimination"
-        ])
-
-        if is_debt_line and not is_invalid and idx not in seen_indices:
-            val = parse_num(r[latest_col])
-            if val is not None and val > 0:
-                debt_sum += val
-                seen_indices.add(idx)
-
-    return debt_sum if debt_sum > 0 else None
+    funded_debt = st_debt_sum + lt_debt_sum
+    
+    # Sanity check: If funded debt was correctly found (> 0), use it; otherwise fallback to Total Liabilities
+    final_debt = funded_debt if funded_debt > 0 else total_liab
+    
+    return final_debt, equity
 
 @st.cache_data(show_spinner=False)
 def get_sec_data(ticker_symbol):
@@ -315,25 +333,8 @@ if run_analysis or ticker:
                 ["Total current liabilities", "Current liabilities"]
             )
             
-            # 6. Total Debt (Cross-division funded debt aggregation)
-            total_debt = extract_total_debt(raw_bal)
-            
-            # 7. Stockholders' Equity
-            stockholders_equity = extract_metric(
-                raw_bal,
-                ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"]
-            )
-            
-            # Fallbacks if lines are completely non-standard
-            total_assets = extract_metric(raw_bal, ["Assets"], ["Total assets", "Assets"])
-            total_liab = extract_metric(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"])
-            
-            if (not total_debt or total_debt == 0) and total_liab:
-                total_debt = total_liab
-                
-            if (not stockholders_equity or stockholders_equity <= 0) and total_assets and total_liab:
-                stockholders_equity = total_assets - total_liab
+            # 6. Debt and Equity
+            total_debt, stockholders_equity = calculate_debt_and_equity(raw_bal)
 
             # Calculated Ratios
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue > 0) else "N/A"
