@@ -22,20 +22,30 @@ ticker = st.sidebar.text_input("Enter Ticker Symbol:", "CAT").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
 def clean_statement_df(df):
-    """Filters all XBRL dimensional axes, taxonomy metadata, and sets line labels as row index."""
+    """Filters metadata columns and retains only audited fiscal period reporting columns."""
     if df is None or df.empty:
         return None
-    # Strip all raw taxonomy, dimension, and structural columns
-    cols_to_drop = [
-        c for c in [
-            "concept", "standard_concept", "level", "abstract", 
-            "dimension", "dimension_axis", "dimension_member", "is_breakdown"
-        ] if c in df.columns
-    ]
-    cleaned = df.drop(columns=cols_to_drop)
     
-    if "label" in cleaned.columns:
+    # Exclude all SEC technical metadata and taxonomy columns
+    meta_cols = {
+        "concept", "standard_concept", "level", "abstract", 
+        "dimension", "dimension_axis", "dimension_member", 
+        "dimension_label", "balance", "weight", "preferred_sign", 
+        "is_breakdown", "decimals"
+    }
+    
+    label_col = "label" if "label" in df.columns else None
+    
+    # Keep only period columns (e.g., date formats or FY/CY tags)
+    period_cols = [c for c in df.columns if c not in meta_cols and c != "label"]
+    
+    if label_col:
+        cols_to_keep = [label_col] + period_cols
+        cleaned = df[cols_to_keep].copy()
         cleaned = cleaned.set_index("label")
+    else:
+        cleaned = df[period_cols].copy()
+        
     return cleaned
 
 def extract_metric(df, keywords):
@@ -51,7 +61,7 @@ def extract_metric(df, keywords):
             # Search backward from the latest reported period
             for col in series.index:
                 val = series[col]
-                if pd.notna(val) and val != "":
+                if pd.notna(val) and val != "" and str(val).lower() != "none":
                     try:
                         clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
                         if abs(clean_num) > 1000:
@@ -172,14 +182,15 @@ if run_analysis or ticker:
             current_assets = extract_metric(balance, ["total current assets"])
             current_liab = extract_metric(balance, ["total current liabilities"])
             
-            # Robust Debt Resolution across Industrials and Tech
-            st_debt = extract_metric(balance, ["short-term debt", "commercial paper", "current portion of long-term debt", "notes payable"]) or 0
+            # Robust Debt & Equity Resolution (Handles Industrials, Financial Products & Tech)
+            st_debt = extract_metric(balance, ["short-term debt", "commercial paper", "current portion of long-term debt", "short-term borrowings"]) or 0
             lt_debt = extract_metric(balance, ["long-term debt due after one year", "long-term debt", "term debt", "total debt"]) or 0
-            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric(balance, ["total debt", "total liabilities"])
+            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else extract_metric(balance, ["total debt", "total liabilities", "liabilities"])
             
             stockholders_equity = extract_metric(balance, [
                 "total shareholders' equity", "total stockholders' equity", 
-                "shareholders' equity", "stockholders' equity", "total equity", "caterpillar shareholders' equity"
+                "shareholders' equity", "stockholders' equity", "total equity", 
+                "caterpillar shareholders' equity"
             ])
             
             # Calculate ratios
