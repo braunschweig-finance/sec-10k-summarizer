@@ -74,10 +74,63 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_consolidated_metric(df, standard_concepts, exact_labels):
+def parse_num(val):
+    if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+        try:
+            n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+            if abs(n) > 1000:
+                return n
+        except Exception:
+            pass
+    return None
+
+def extract_metric(df, concepts, labels):
+    """Extracts consolidated metric by matching concepts or exact labels, taking max to avoid division slices."""
+    if df is None or df.empty:
+        return None
+        
+    date_cols = [c for c in df.columns if is_date_or_period_column(c)]
+    if not date_cols:
+        return None
+    latest_col = date_cols[0]
+
+    target_df = df.copy()
+    if "dimension" in target_df.columns:
+        target_df = target_df[~target_df["dimension"].astype(bool)]
+    elif "dimension_axis" in target_df.columns:
+        target_df = target_df[target_df["dimension_axis"].isna() | (target_df["dimension_axis"] == "None") | (target_df["dimension_axis"] == "")]
+    if target_df.empty:
+        target_df = df
+
+    vals = []
+    # 1. Concept check
+    for c_col in ["standard_concept", "concept"]:
+        if c_col in target_df.columns:
+            for c in concepts:
+                subset = target_df[target_df[c_col].astype(str).str.lower().str.endswith(c.lower())]
+                for _, r in subset.iterrows():
+                    n = parse_num(r[latest_col])
+                    if n is not None:
+                        vals.append(n)
+
+    # 2. Label check
+    if "label" in target_df.columns:
+        for lbl in labels:
+            for _, r in target_df.iterrows():
+                row_lbl = str(r["label"]).lower().strip().rstrip(":")
+                if any(bad in row_lbl for bad in ["intersegment", "elimination", "par value"]):
+                    continue
+                if row_lbl == lbl.lower().strip() or row_lbl.startswith(lbl.lower().strip()):
+                    n = parse_num(r[latest_col])
+                    if n is not None:
+                        vals.append(n)
+
+    return max(vals) if vals else None
+
+def extract_total_debt(df):
     """
-    Extracts true consolidated statement totals by matching exact concept/label
-    and taking the maximum value to avoid divisional sub-segments (e.g. Machinery vs Consolidated).
+    Computes total debt across all balance sheet segments.
+    Sums distinct short-term borrowings and long-term debt lines, avoiding double-counting total rows.
     """
     if df is None or df.empty:
         return None
@@ -87,54 +140,40 @@ def extract_consolidated_metric(df, standard_concepts, exact_labels):
         return None
     latest_col = date_cols[0]
 
-    # Exclude dimensional rows if tagged
-    target_df = df.copy()
-    if "dimension" in target_df.columns:
-        target_df = target_df[~target_df["dimension"].astype(bool)]
-    elif "dimension_axis" in target_df.columns:
-        target_df = target_df[target_df["dimension_axis"].isna() | (target_df["dimension_axis"] == "None") | (target_df["dimension_axis"] == "")]
-    if target_df.empty:
-        target_df = df
+    # First check if there is an explicit single 'Total Debt' consolidated line
+    explicit_total = extract_metric(df, ["TotalDebt", "DebtInstrumentCarryingAmount"], ["Total debt"])
+    if explicit_total and explicit_total > 5000:
+        return explicit_total
 
-    matched_values = []
+    # Otherwise aggregate funded debt components (Short-term debt + Long-term debt across operating & finance divisions)
+    debt_sum = 0.0
+    seen_indices = set()
+    label_col = "label" if "label" in df.columns else None
 
-    # Priority 1: Match standard or raw concepts
-    concept_cols = [c for c in ["standard_concept", "concept"] if c in target_df.columns]
-    for c_col in concept_cols:
-        for sc in standard_concepts:
-            subset = target_df[target_df[c_col].astype(str).str.lower().str.endswith(sc.lower())]
-            for _, r in subset.iterrows():
-                val = r[latest_col]
-                if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
-                    try:
-                        n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                        if abs(n) > 1000:
-                            matched_values.append(n)
-                    except Exception:
-                        pass
+    for idx, r in df.iterrows():
+        row_str = (str(r[label_col]) if label_col else "").lower()
+        concept_str = (str(r.get("concept", "")) + " " + str(r.get("standard_concept", ""))).lower()
+        full_text = f"{row_str} {concept_str}"
 
-    # Priority 2: Match exact label (rejects 'other', 'prepaid', 'intersegment')
-    label_col = "label" if "label" in target_df.columns else None
-    if label_col:
-        for el in exact_labels:
-            for _, r in target_df.iterrows():
-                row_label = str(r[label_col]).lower().strip().rstrip(":")
-                if any(bad in row_label for bad in ["other", "prepaid", "intersegment", "elimination", "par value"]):
-                    continue
-                if row_label == el.lower().strip() or row_label.startswith(el.lower().strip()):
-                    val = r[latest_col]
-                    if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
-                        try:
-                            n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                            if abs(n) > 1000:
-                                matched_values.append(n)
-                        except Exception:
-                            pass
+        # Match legitimate debt lines
+        is_debt_line = any(term in full_text for term in [
+            "short-term borrowings", "short-term debt", "commercial paper", 
+            "long-term debt due after one year", "long-term debt, including", "long-term debt",
+            "term debt", "notes payable", "debtcurrent", "longtermdebtnoncurrent"
+        ])
 
-    # The consolidated total across multi-column divisional statements is the maximum value
-    if matched_values:
-        return max(matched_values)
-    return None
+        # Exclude aggregate lines, interest lines, and tax lines
+        is_invalid = any(bad in full_text for bad in [
+            "total debt", "interest", "tax", "fair value", "fair_value", "guarantee", "intersegment", "elimination"
+        ])
+
+        if is_debt_line and not is_invalid and idx not in seen_indices:
+            val = parse_num(r[latest_col])
+            if val is not None and val > 0:
+                debt_sum += val
+                seen_indices.add(idx)
+
+    return debt_sum if debt_sum > 0 else None
 
 @st.cache_data(show_spinner=False)
 def get_sec_data(ticker_symbol):
@@ -236,20 +275,20 @@ if run_analysis or ticker:
             raw_inc = data.get("raw_income")
             raw_bal = data.get("raw_balance")
             
-            # 1. Total Revenue
-            revenue = extract_consolidated_metric(
+            # 1. Revenue
+            revenue = extract_metric(
                 raw_inc,
                 ["SalesRevenueNet", "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
                 ["Total sales and revenues", "Total net sales", "Total revenues", "Revenue"]
             )
             # 2. Cost of Goods / Sales
-            cogs = extract_consolidated_metric(
+            cogs = extract_metric(
                 raw_inc,
                 ["CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
                 ["Cost of goods sold", "Cost of sales", "Cost of products sold"]
             )
             # 3. Gross Profit
-            gross_profit = extract_consolidated_metric(
+            gross_profit = extract_metric(
                 raw_inc,
                 ["GrossProfit"],
                 ["Gross profit", "Gross margin"]
@@ -258,63 +297,39 @@ if run_analysis or ticker:
                 gross_profit = revenue - cogs
 
             # 4. Operating Income
-            operating_income = extract_consolidated_metric(
+            operating_income = extract_metric(
                 raw_inc,
                 ["OperatingIncomeLoss"],
                 ["Operating profit", "Operating income", "Segment operating profit", "Earnings before income taxes"]
             )
             
-            # 5. Current Assets (Consolidated Total)
-            current_assets = extract_consolidated_metric(
+            # 5. Current Assets & Current Liabilities (Consolidated Totals)
+            current_assets = extract_metric(
                 raw_bal,
                 ["AssetsCurrent"],
                 ["Total current assets", "Current assets"]
             )
-            
-            # 6. Current Liabilities (Consolidated Total)
-            current_liab = extract_consolidated_metric(
+            current_liab = extract_metric(
                 raw_bal,
                 ["LiabilitiesCurrent"],
                 ["Total current liabilities", "Current liabilities"]
             )
             
-            # 7. Total Debt (Sum of short-term borrowings + long-term debt noncurrent)
-            st_debt = extract_consolidated_metric(
-                raw_bal,
-                ["DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
-                ["Short-term borrowings", "Short-term debt", "Commercial paper", "Current portion of long-term debt"]
-            ) or 0
+            # 6. Total Debt (Cross-division funded debt aggregation)
+            total_debt = extract_total_debt(raw_bal)
             
-            lt_debt = extract_consolidated_metric(
-                raw_bal,
-                ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermDebt"],
-                ["Long-term debt due after one year", "Long-term debt, including current maturities", "Long-term debt", "Term debt"]
-            ) or 0
-            
-            # If total debt lines are reported as a single consolidated row
-            total_debt_consolidated = extract_consolidated_metric(
-                raw_bal,
-                ["Debt", "TotalDebt"],
-                ["Total debt"]
-            )
-            
-            if total_debt_consolidated and total_debt_consolidated > (st_debt + lt_debt):
-                total_debt = total_debt_consolidated
-            else:
-                total_debt = st_debt + lt_debt
-
-            # 8. Stockholders' Equity (Consolidated Total)
-            stockholders_equity = extract_consolidated_metric(
+            # 7. Stockholders' Equity
+            stockholders_equity = extract_metric(
                 raw_bal,
                 ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
                 ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"]
             )
             
-            # Accounting identity fallback
-            total_assets = extract_consolidated_metric(raw_bal, ["Assets"], ["Total assets", "Assets"])
-            total_liab = extract_consolidated_metric(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"])
+            # Fallbacks if lines are completely non-standard
+            total_assets = extract_metric(raw_bal, ["Assets"], ["Total assets", "Assets"])
+            total_liab = extract_metric(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"])
             
-            if total_debt == 0 and total_liab:
+            if (not total_debt or total_debt == 0) and total_liab:
                 total_debt = total_liab
                 
             if (not stockholders_equity or stockholders_equity <= 0) and total_assets and total_liab:
