@@ -74,8 +74,8 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_exact_concept_or_label(df, target_concepts, target_labels, exclude_keywords=None):
-    """Accurately resolves consolidated line items using concept matching first, then exact label matching."""
+def extract_metric_canonical(df, standard_targets, label_targets, exclude_terms=None):
+    """Accurately extracts consolidated non-dimensional values from SEC XBRL filings."""
     if df is None or df.empty:
         return None
         
@@ -84,17 +84,25 @@ def extract_exact_concept_or_label(df, target_concepts, target_labels, exclude_k
         return None
     latest_col = date_cols[0]
 
-    if exclude_keywords is None:
-        exclude_keywords = ["intersegment", "elimination", "par value", "per share"]
+    if exclude_terms is None:
+        exclude_terms = ["intersegment", "elimination", "par value", "per share"]
 
-    # 1. Match standard US-GAAP concept suffix (e.g. AssetsCurrent)
-    if "concept" in df.columns:
-        for tc in target_concepts:
-            subset = df[df["concept"].astype(str).str.lower().str.endswith(tc.lower())]
-            for _, r in subset.iterrows():
-                row_concept = str(r["concept"]).lower()
-                if any(ex in row_concept for ex in exclude_keywords):
-                    continue
+    # Filter out dimensional segment rows to ensure only consolidated totals are evaluated
+    clean_df = df.copy()
+    if "dimension" in clean_df.columns:
+        # Keep rows where dimension is False or empty
+        clean_df = clean_df[~clean_df["dimension"].astype(bool)]
+    elif "dimension_axis" in clean_df.columns:
+        clean_df = clean_df[clean_df["dimension_axis"].isna() | (clean_df["dimension_axis"] == "None") | (clean_df["dimension_axis"] == "")]
+
+    if clean_df.empty:
+        clean_df = df # Fallback if dimension flag is not present
+
+    # 1. Match standard_concept (normalized XBRL)
+    if "standard_concept" in clean_df.columns:
+        for st_cand in standard_targets:
+            match = clean_df[clean_df["standard_concept"].astype(str).str.lower() == st_cand.lower()]
+            for _, r in match.iterrows():
                 val = r[latest_col]
                 if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
                     try:
@@ -104,16 +112,29 @@ def extract_exact_concept_or_label(df, target_concepts, target_labels, exclude_k
                     except Exception:
                         continue
 
-    # 2. Strict label matching top-down
-    label_col = "label" if "label" in df.columns else None
+    # 2. Match raw concept ending with standard US-GAAP tag
+    if "concept" in clean_df.columns:
+        for st_cand in standard_targets:
+            match = clean_df[clean_df["concept"].astype(str).str.lower().str.endswith(st_cand.lower())]
+            for _, r in match.iterrows():
+                val = r[latest_col]
+                if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+                    try:
+                        n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                        if abs(n) > 1000:
+                            return n
+                    except Exception:
+                        continue
+
+    # 3. Match label top-down
+    label_col = "label" if "label" in clean_df.columns else None
     if label_col:
-        for tl in target_labels:
-            for _, r in df.iterrows():
+        for lt in label_targets:
+            for _, r in clean_df.iterrows():
                 row_label = str(r[label_col]).lower().strip()
-                if any(ex in row_label for ex in exclude_keywords):
+                if any(ex in row_label for ex in exclude_terms):
                     continue
-                # Exact or anchored prefix match
-                if row_label == tl.lower() or row_label.startswith(tl.lower()):
+                if lt.lower() in row_label:
                     val = r[latest_col]
                     if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
                         try:
@@ -224,18 +245,20 @@ if run_analysis or ticker:
             raw_inc = data.get("raw_income")
             raw_bal = data.get("raw_balance")
             
-            # Revenue & Profit Margins
-            revenue = extract_exact_concept_or_label(
+            # 1. Revenue
+            revenue = extract_metric_canonical(
                 raw_inc,
-                ["SalesRevenueNet", "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+                ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
                 ["Total sales and revenues", "Total net sales", "Total revenues", "Revenue"]
             )
-            cogs = extract_exact_concept_or_label(
+            # 2. Cost of Goods / Sales
+            cogs = extract_metric_canonical(
                 raw_inc,
                 ["CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
                 ["Cost of goods sold", "Cost of sales", "Cost of products sold"]
             )
-            gross_profit = extract_exact_concept_or_label(
+            # 3. Gross Profit
+            gross_profit = extract_metric_canonical(
                 raw_inc,
                 ["GrossProfit"],
                 ["Gross profit", "Gross margin"]
@@ -243,49 +266,58 @@ if run_analysis or ticker:
             if not gross_profit and revenue and cogs:
                 gross_profit = revenue - cogs
 
-            operating_income = extract_exact_concept_or_label(
+            # 4. Operating Income
+            operating_income = extract_metric_canonical(
                 raw_inc,
                 ["OperatingIncomeLoss"],
                 ["Operating profit", "Operating income", "Segment operating profit", "Earnings before income taxes"]
             )
             
-            # Balance Sheet - Liquidity & Capital Structure
-            current_assets = extract_exact_concept_or_label(
+            # 5. Balance Sheet Liquidity (Consolidated Non-Dimensional Totals)
+            current_assets = extract_metric_canonical(
                 raw_bal,
                 ["AssetsCurrent"],
-                ["Total current assets", "Current assets"]
+                ["Total current assets", "Current assets:"]
             )
-            current_liab = extract_exact_concept_or_label(
+            current_liab = extract_metric_canonical(
                 raw_bal,
                 ["LiabilitiesCurrent"],
-                ["Total current liabilities", "Current liabilities"]
+                ["Total current liabilities", "Current liabilities:"]
             )
             
-            # Total Debt = Short-term debt + Long-term debt
-            st_debt = extract_exact_concept_or_label(
+            # 6. Total Debt (Short-Term Debt + Long-Term Debt)
+            st_debt = extract_metric_canonical(
                 raw_bal,
-                ["ShortTermBorrowings", "CommercialPaper", "DebtCurrent"],
+                ["DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
                 ["Short-term borrowings", "Short-term debt", "Commercial paper", "Current portion of long-term debt"]
             ) or 0
             
-            lt_debt = extract_exact_concept_or_label(
+            lt_debt = extract_metric_canonical(
                 raw_bal,
                 ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermDebt"],
                 ["Long-term debt due after one year", "Long-term debt, including current maturities", "Long-term debt", "Term debt"]
             ) or 0
             
             total_debt = st_debt + lt_debt
-            if total_debt == 0:
-                total_debt = extract_exact_concept_or_label(raw_bal, ["Liabilities"], ["Total liabilities"]) or 0
-
-            # Stockholders' Equity
-            stockholders_equity = extract_exact_concept_or_label(
+            
+            # 7. Stockholders' Equity
+            stockholders_equity = extract_metric_canonical(
                 raw_bal,
                 ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "Total equity", "Shareholders' equity", "Stockholders' equity"]
+                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"]
             )
+            
+            # Fallback if debt or equity line items are aggregated
+            total_assets = extract_metric_canonical(raw_bal, ["Assets"], ["Total assets", "Assets"])
+            total_liab = extract_metric_canonical(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"])
+            
+            if total_debt == 0 and total_liab:
+                total_debt = total_liab
+                
+            if (not stockholders_equity or stockholders_equity <= 0) and total_assets and total_liab:
+                stockholders_equity = total_assets - total_liab
 
-            # Ratios
+            # Calculated Ratios
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue > 0) else "N/A"
             om = f"{(operating_income / revenue) * 100:.1f}%" if (operating_income and revenue and revenue > 0) else "N/A"
             cr = f"{(current_assets / current_liab):.2f}x" if (current_assets and current_liab and current_liab > 0) else "N/A"
