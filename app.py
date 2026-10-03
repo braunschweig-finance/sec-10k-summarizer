@@ -81,7 +81,7 @@ def extract_metric_raw(df, keywords, exclude_words=None):
         return None
     
     if exclude_words is None:
-        exclude_words = ["intersegment", "elimination", "excluding", "segment", "geographic"]
+        exclude_words = ["intersegment", "elimination", "excluding", "segment", "geographic", "par value", "per share"]
     
     label_col = None
     for cand in ["label", "standard_concept", "concept"]:
@@ -99,7 +99,7 @@ def extract_metric_raw(df, keywords, exclude_words=None):
     for idx in df.index:
         row_label = str(df.loc[idx, label_col]).lower().strip()
         
-        # Skip segment breakdowns that skew consolidated numbers
+        # Skip segment breakdowns and par value micro-lines
         if any(ex in row_label for ex in exclude_words):
             continue
             
@@ -235,32 +235,42 @@ if run_analysis or ticker:
             if not gross_profit and revenue and cost_of_goods:
                 gross_profit = revenue - cost_of_goods
                 
-            # 4. Operating Income (handles Industrials, Tech, and Agribusiness)
+            # 4. Operating Income
             operating_income = extract_metric_raw(raw_inc, [
                 "operating profit", "operating income", "segment operating profit", "earnings before income taxes"
             ], exclude_words=["intersegment", "elimination"])
             
-            # 5. Balance Sheet Items
+            # 5. Balance Sheet Liquidity & Totals
             current_assets = extract_metric_raw(raw_bal, ["total current assets"])
             current_liab = extract_metric_raw(raw_bal, ["total current liabilities"])
             total_assets = extract_metric_raw(raw_bal, ["total assets", "assets"])
-            total_liab = extract_metric_raw(raw_bal, ["total liabilities", "liabilities"])
+            total_liab = extract_metric_raw(raw_bal, ["total liabilities"])
             
-            # 6. Total Debt
-            st_debt = extract_metric_raw(raw_bal, ["short-term debt", "short-term borrowings", "commercial paper", "current portion of long-term debt"]) or 0
-            lt_debt = extract_metric_raw(raw_bal, ["long-term debt due after one year", "long-term debt, including current maturities", "long-term debt", "term debt"]) or 0
+            # 6. Total Debt (Short-Term + Long-Term Debt, or fallback to Total Liabilities)
+            st_debt = extract_metric_raw(raw_bal, [
+                "short-term debt", "short-term borrowings", "commercial paper", "current portion of long-term debt"
+            ]) or 0
+            lt_debt = extract_metric_raw(raw_bal, [
+                "long-term debt due after one year", "long-term debt, including current maturities", "long-term debt", "term debt"
+            ]) or 0
             total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else total_liab
 
-            # 7. Stockholders' Equity (With Accounting Identity Fallback: Assets - Liabilities)
-            stockholders_equity = extract_metric_raw(raw_bal, [
-                "caterpillar shareholders' equity", "adm shareholders' equity", 
-                "total shareholders' equity", "total stockholders' equity", 
-                "shareholders' equity", "stockholders' equity", "total equity"
-            ])
-            if (not stockholders_equity or stockholders_equity <= 0) and total_assets and total_liab:
+            # 7. Stockholders' Equity (Target only full consolidated totals, exclude par value and single component lines)
+            stockholders_equity = extract_metric_raw(
+                raw_bal, 
+                [
+                    "total shareholders' equity", "total stockholders' equity", 
+                    "caterpillar shareholders' equity", "total caterpillar shareholders' equity",
+                    "adm shareholders' equity", "total equity"
+                ],
+                exclude_words=["par value", "per share", "preferred stock", "common stock", "additional paid", "retained earnings"]
+            )
+            
+            # Fallback to pure accounting balance: Equity = Total Assets - Total Liabilities
+            if (not stockholders_equity or stockholders_equity < (total_assets * 0.05 if total_assets else 0)) and total_assets and total_liab:
                 stockholders_equity = total_assets - total_liab
 
-            # Ratios
+            # Ratio Math
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue > 0) else "N/A"
             om = f"{(operating_income / revenue) * 100:.1f}%" if (operating_income and revenue and revenue > 0) else "N/A"
             cr = f"{(current_assets / current_liab):.2f}x" if (current_assets and current_liab and current_liab > 0) else "N/A"
