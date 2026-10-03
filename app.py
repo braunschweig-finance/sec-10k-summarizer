@@ -14,12 +14,12 @@ set_identity("Jacob Braunschweig jacob.braunschweig@gmail.com")
 
 # 2. Page Configuration (NetAdvantage / Capital IQ Style)
 st.set_page_config(page_title="SEC Financial & Corporate Governance Terminal", layout="wide")
-st.title("🏛️️ SEC Financial & Corporate Governance Terminal")
+st.title("🏛️ SEC Financial & Corporate Governance Terminal")
 st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Dynamic Ratios & DEF 14A Governance")
 
 # Sidebar Controls
 st.sidebar.header("Terminal Navigation")
-ticker = st.sidebar.text_input("Enter Ticker Symbol:", "ADM").upper().strip()
+ticker = st.sidebar.text_input("Enter Ticker Symbol:", "CAT").upper().strip()
 run_analysis = st.sidebar.button("Fetch & Analyze SEC Data", type="primary")
 
 def is_date_or_period_column(col_name):
@@ -75,10 +75,13 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_metric_raw(df, keywords):
-    """Finds target line item in raw XBRL DataFrame and extracts the latest reported numeric value."""
+def extract_metric_raw(df, keywords, exclude_words=None):
+    """Finds target line item top-down, ignoring sub-segment breakdowns."""
     if df is None or df.empty:
         return None
+    
+    if exclude_words is None:
+        exclude_words = ["intersegment", "elimination", "excluding", "segment", "geographic"]
     
     label_col = None
     for cand in ["label", "standard_concept", "concept"]:
@@ -92,12 +95,16 @@ def extract_metric_raw(df, keywords):
     if not date_cols:
         return None
 
-    # Search through rows in reverse to favor totals and consolidated summary rows
-    for idx in reversed(df.index):
+    # Search top-down to grab primary consolidated line items first
+    for idx in df.index:
         row_label = str(df.loc[idx, label_col]).lower().strip()
+        
+        # Skip segment breakdowns that skew consolidated numbers
+        if any(ex in row_label for ex in exclude_words):
+            continue
+            
         if any(kw.lower() in row_label for kw in keywords):
             row_vals = df.loc[idx, date_cols]
-            # Handle possible series vs dataframe row slicing
             if isinstance(row_vals, pd.DataFrame):
                 row_vals = row_vals.iloc[0]
             for val in row_vals:
@@ -212,57 +219,52 @@ if run_analysis or ticker:
             raw_inc = data.get("raw_income")
             raw_bal = data.get("raw_balance")
             
-            # Universal Revenue and Cost Parsing
+            # 1. Total Top-Line Revenue
             revenue = extract_metric_raw(raw_inc, [
                 "total sales and revenues", "total net sales", "total revenues", 
-                "revenue", "sales and other operating revenues", "revenues"
+                "revenue from contract with customer", "sales and other operating revenues", "revenues"
             ])
-            cost_of_goods = extract_metric_raw(raw_inc, [
-                "cost of products sold", "cost of goods sold", "cost of sales", "operating costs"
-            ])
-            gross_profit = extract_metric_raw(raw_inc, ["gross margin", "gross profit"])
             
+            # 2. Cost of Goods / Sales
+            cost_of_goods = extract_metric_raw(raw_inc, [
+                "cost of goods sold", "cost of sales", "cost of products sold", "operating costs"
+            ])
+            
+            # 3. Gross Profit
+            gross_profit = extract_metric_raw(raw_inc, ["gross margin", "gross profit"])
             if not gross_profit and revenue and cost_of_goods:
                 gross_profit = revenue - cost_of_goods
                 
+            # 4. Operating Income (handles Industrials, Tech, and Agribusiness)
             operating_income = extract_metric_raw(raw_inc, [
-                "segment operating profit", "operating profit", "operating income", 
-                "earnings before income taxes", "operating earnings"
-            ])
+                "operating profit", "operating income", "segment operating profit", "earnings before income taxes"
+            ], exclude_words=["intersegment", "elimination"])
             
-            total_assets = extract_metric_raw(raw_bal, ["total assets", "assets"])
+            # 5. Balance Sheet Items
             current_assets = extract_metric_raw(raw_bal, ["total current assets"])
             current_liab = extract_metric_raw(raw_bal, ["total current liabilities"])
+            total_assets = extract_metric_raw(raw_bal, ["total assets", "assets"])
             total_liab = extract_metric_raw(raw_bal, ["total liabilities", "liabilities"])
             
-            # Universal Debt Resolution (Short + Long Debt or Total Liabilities proxy)
-            st_debt = extract_metric_raw(raw_bal, [
-                "short-term debt", "short-term borrowings", "commercial paper", 
-                "current portion of long-term debt", "notes payable"
-            ]) or 0
-            lt_debt = extract_metric_raw(raw_bal, [
-                "long-term debt, including current maturities", "long-term debt due after one year", 
-                "long-term debt", "term debt"
-            ]) or 0
+            # 6. Total Debt
+            st_debt = extract_metric_raw(raw_bal, ["short-term debt", "short-term borrowings", "commercial paper", "current portion of long-term debt"]) or 0
+            lt_debt = extract_metric_raw(raw_bal, ["long-term debt due after one year", "long-term debt, including current maturities", "long-term debt", "term debt"]) or 0
             total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else total_liab
-            
-            # Universal Equity Resolution (Handles specific company prefixes or standard identity fallback)
+
+            # 7. Stockholders' Equity (With Accounting Identity Fallback: Assets - Liabilities)
             stockholders_equity = extract_metric_raw(raw_bal, [
+                "caterpillar shareholders' equity", "adm shareholders' equity", 
                 "total shareholders' equity", "total stockholders' equity", 
-                "shareholders' equity", "stockholders' equity", "total equity", 
-                "adm shareholders' equity", "caterpillar shareholders' equity", 
-                "common stockholders' equity"
+                "shareholders' equity", "stockholders' equity", "total equity"
             ])
-            
-            # Accounting Identity Fallback: Equity = Assets - Liabilities
-            if not stockholders_equity and total_assets and total_liab:
+            if (not stockholders_equity or stockholders_equity <= 0) and total_assets and total_liab:
                 stockholders_equity = total_assets - total_liab
-            
-            # Calculate ratios
-            gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue != 0) else "N/A"
-            om = f"{(operating_income / revenue) * 100:.1f}%" if (operating_income and revenue and revenue != 0) else "N/A"
-            cr = f"{(current_assets / current_liab):.2f}x" if (current_assets and current_liab and current_liab != 0) else "N/A"
-            de = f"{(total_debt / stockholders_equity):.2f}x" if (total_debt and stockholders_equity and stockholders_equity != 0) else "N/A"
+
+            # Ratios
+            gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue > 0) else "N/A"
+            om = f"{(operating_income / revenue) * 100:.1f}%" if (operating_income and revenue and revenue > 0) else "N/A"
+            cr = f"{(current_assets / current_liab):.2f}x" if (current_assets and current_liab and current_liab > 0) else "N/A"
+            de = f"{(total_debt / stockholders_equity):.2f}x" if (total_debt and stockholders_equity and stockholders_equity > 0) else "N/A"
             
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Gross Margin", gm)
