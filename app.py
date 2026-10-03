@@ -32,7 +32,7 @@ def is_date_or_period_column(col_name):
     return False
 
 def clean_statement_df(df):
-    """Strictly retains row label and numeric fiscal date period columns, formatting numbers with commas."""
+    """Retains row label and numeric fiscal date period columns, formatting numbers with commas."""
     if df is None or df.empty:
         return None
     
@@ -75,46 +75,51 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_metric_raw(df, keywords, exclude_words=None):
-    """Finds target line item top-down, ignoring sub-segment breakdowns."""
+def get_row_value(df, label_targets, concept_targets=None):
+    """Extracts the latest period numeric value by matching label keywords or US-GAAP concept strings."""
     if df is None or df.empty:
         return None
     
-    if exclude_words is None:
-        exclude_words = ["intersegment", "elimination", "excluding", "segment", "geographic", "par value", "per share"]
-    
-    label_col = None
-    for cand in ["label", "standard_concept", "concept"]:
-        if cand in df.columns:
-            label_col = cand
-            break
-    if not label_col:
-        return None
-
+    # 1. Identify date columns
     date_cols = [c for c in df.columns if is_date_or_period_column(c)]
     if not date_cols:
         return None
+    
+    latest_col = date_cols[0] # edgartools arranges the most recent period first
+    
+    # 2. Check concept column first (exact US-GAAP taxonomy match)
+    if concept_targets and "concept" in df.columns:
+        for ct in concept_targets:
+            match = df[df["concept"].astype(str).str.lower().str.endswith(ct.lower())]
+            if not match.empty:
+                for col in date_cols:
+                    val = match.iloc[0][col]
+                    if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+                        try:
+                            clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                            if abs(clean_num) > 1000:
+                                return clean_num
+                        except Exception:
+                            continue
 
-    # Search top-down to grab primary consolidated line items first
-    for idx in df.index:
-        row_label = str(df.loc[idx, label_col]).lower().strip()
-        
-        # Skip segment breakdowns and par value micro-lines
-        if any(ex in row_label for ex in exclude_words):
-            continue
-            
-        if any(kw.lower() in row_label for kw in keywords):
-            row_vals = df.loc[idx, date_cols]
-            if isinstance(row_vals, pd.DataFrame):
-                row_vals = row_vals.iloc[0]
-            for val in row_vals:
-                if pd.notna(val) and val != "" and str(val).lower() != "none":
-                    try:
-                        clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                        if abs(clean_num) > 1000:
-                            return clean_num
-                    except (ValueError, TypeError):
+    # 3. Check label column top-down
+    label_col = "label" if "label" in df.columns else None
+    if label_col:
+        for lt in label_targets:
+            for idx, row in df.iterrows():
+                row_label = str(row[label_col]).lower().strip()
+                if lt.lower() in row_label:
+                    if any(bad in row_label for bad in ["intersegment", "elimination", "par value"]):
                         continue
+                    for col in date_cols:
+                        val = row[col]
+                        if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+                            try:
+                                clean_num = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                                if abs(clean_num) > 1000:
+                                    return clean_num
+                            except Exception:
+                                continue
     return None
 
 @st.cache_data(show_spinner=False)
@@ -122,13 +127,11 @@ def get_sec_data(ticker_symbol):
     try:
         company = Company(ticker_symbol)
         
-        # 1. Direct Financial Statements via XBRL
         financials = company.get_financials()
         raw_income = financials.income_statement().to_dataframe() if financials else None
         raw_balance = financials.balance_sheet().to_dataframe() if financials else None
         raw_cashflow = financials.cash_flow_statement().to_dataframe() if financials else None
 
-        # 2. Extract Text from Form DEF 14A (Proxy Statement)
         proxy_filings = company.get_filings(form="DEF 14A")
         governance_sections = {}
         proxy_raw = ""
@@ -219,58 +222,57 @@ if run_analysis or ticker:
             raw_inc = data.get("raw_income")
             raw_bal = data.get("raw_balance")
             
-            # 1. Total Top-Line Revenue
-            revenue = extract_metric_raw(raw_inc, [
-                "total sales and revenues", "total net sales", "total revenues", 
-                "revenue from contract with customer", "sales and other operating revenues", "revenues"
-            ])
-            
-            # 2. Cost of Goods / Sales
-            cost_of_goods = extract_metric_raw(raw_inc, [
-                "cost of goods sold", "cost of sales", "cost of products sold", "operating costs"
-            ])
-            
-            # 3. Gross Profit
-            gross_profit = extract_metric_raw(raw_inc, ["gross margin", "gross profit"])
-            if not gross_profit and revenue and cost_of_goods:
-                gross_profit = revenue - cost_of_goods
-                
-            # 4. Operating Income
-            operating_income = extract_metric_raw(raw_inc, [
-                "operating profit", "operating income", "segment operating profit", "earnings before income taxes"
-            ], exclude_words=["intersegment", "elimination"])
-            
-            # 5. Balance Sheet Liquidity & Totals
-            current_assets = extract_metric_raw(raw_bal, ["total current assets"])
-            current_liab = extract_metric_raw(raw_bal, ["total current liabilities"])
-            total_assets = extract_metric_raw(raw_bal, ["total assets", "assets"])
-            total_liab = extract_metric_raw(raw_bal, ["total liabilities"])
-            
-            # 6. Total Debt (Short-Term + Long-Term Debt, or fallback to Total Liabilities)
-            st_debt = extract_metric_raw(raw_bal, [
-                "short-term debt", "short-term borrowings", "commercial paper", "current portion of long-term debt"
-            ]) or 0
-            lt_debt = extract_metric_raw(raw_bal, [
-                "long-term debt due after one year", "long-term debt, including current maturities", "long-term debt", "term debt"
-            ]) or 0
-            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else total_liab
-
-            # 7. Stockholders' Equity (Target only full consolidated totals, exclude par value and single component lines)
-            stockholders_equity = extract_metric_raw(
-                raw_bal, 
-                [
-                    "total shareholders' equity", "total stockholders' equity", 
-                    "caterpillar shareholders' equity", "total caterpillar shareholders' equity",
-                    "adm shareholders' equity", "total equity"
-                ],
-                exclude_words=["par value", "per share", "preferred stock", "common stock", "additional paid", "retained earnings"]
+            # 1. Total Revenue
+            revenue = get_row_value(
+                raw_inc, 
+                ["total net sales", "total sales and revenues", "total revenues", "revenue", "sales and other operating revenues"],
+                ["revenuefromcontractwithcustomerexcludingassessedtax", "salesrevenuenet", "revenues"]
             )
             
-            # Fallback to pure accounting balance: Equity = Total Assets - Total Liabilities
-            if (not stockholders_equity or stockholders_equity < (total_assets * 0.05 if total_assets else 0)) and total_assets and total_liab:
+            # 2. Cost of Goods / Sales
+            cogs = get_row_value(
+                raw_inc,
+                ["cost of sales", "cost of goods and services sold", "cost of products sold", "cost of goods sold"],
+                ["costofgoodsandservicessold", "costofgoodssold"]
+            )
+            
+            # 3. Gross Profit
+            gross_profit = get_row_value(
+                raw_inc,
+                ["gross profit", "gross margin"],
+                ["grossprofit"]
+            )
+            if not gross_profit and revenue and cogs:
+                gross_profit = revenue - cogs
+                
+            # 4. Operating Income
+            operating_income = get_row_value(
+                raw_inc,
+                ["operating income", "operating profit", "segment operating profit", "earnings before income taxes"],
+                ["operatingincomeloss"]
+            )
+            
+            # 5. Liquidity & Assets
+            current_assets = get_row_value(raw_bal, ["total current assets"], ["assetsCurrent"])
+            current_liab = get_row_value(raw_bal, ["total current liabilities"], ["liabilitiesCurrent"])
+            total_assets = get_row_value(raw_bal, ["total assets"], ["assets"])
+            total_liab = get_row_value(raw_bal, ["total liabilities"], ["liabilities"])
+            
+            # 6. Total Debt
+            st_debt = get_row_value(raw_bal, ["short-term debt", "commercial paper", "current portion of long-term debt"], ["debtCurrent"]) or 0
+            lt_debt = get_row_value(raw_bal, ["long-term debt", "term debt"], ["longTermDebtNoncurrent"]) or 0
+            total_debt = (st_debt + lt_debt) if (st_debt + lt_debt) > 0 else total_liab
+            
+            # 7. Stockholders' Equity
+            stockholders_equity = get_row_value(
+                raw_bal,
+                ["total shareholders' equity", "total stockholders' equity", "shareholders' equity", "stockholders' equity", "total equity", "caterpillar shareholders' equity"],
+                ["stockholdersequity", "stockholdersequityincludingportionattributabletononcontrollinginterest"]
+            )
+            if (not stockholders_equity or stockholders_equity <= 0) and total_assets and total_liab:
                 stockholders_equity = total_assets - total_liab
 
-            # Ratio Math
+            # Calculated Ratios
             gm = f"{(gross_profit / revenue) * 100:.1f}%" if (gross_profit and revenue and revenue > 0) else "N/A"
             om = f"{(operating_income / revenue) * 100:.1f}%" if (operating_income and revenue and revenue > 0) else "N/A"
             cr = f"{(current_assets / current_liab):.2f}x" if (current_assets and current_liab and current_liab > 0) else "N/A"
