@@ -74,8 +74,8 @@ def clean_statement_df(df):
         
     return cleaned
 
-def extract_metric_canonical(df, standard_targets, label_targets, exclude_terms=None):
-    """Accurately extracts consolidated non-dimensional values from SEC XBRL filings."""
+def extract_metric_strict(df, exact_concepts, exact_labels, fallback_substrings=None):
+    """Extracts true consolidated statement totals, preventing sub-item substring collisions."""
     if df is None or df.empty:
         return None
         
@@ -84,65 +84,67 @@ def extract_metric_canonical(df, standard_targets, label_targets, exclude_terms=
         return None
     latest_col = date_cols[0]
 
-    if exclude_terms is None:
-        exclude_terms = ["intersegment", "elimination", "par value", "per share"]
+    # Filter out dimensional breakdown segments if present
+    target_df = df.copy()
+    if "dimension" in target_df.columns:
+        target_df = target_df[~target_df["dimension"].astype(bool)]
+    elif "dimension_axis" in target_df.columns:
+        target_df = target_df[target_df["dimension_axis"].isna() | (target_df["dimension_axis"] == "None") | (target_df["dimension_axis"] == "")]
+    if target_df.empty:
+        target_df = df
 
-    # Filter out dimensional segment rows to ensure only consolidated totals are evaluated
-    clean_df = df.copy()
-    if "dimension" in clean_df.columns:
-        # Keep rows where dimension is False or empty
-        clean_df = clean_df[~clean_df["dimension"].astype(bool)]
-    elif "dimension_axis" in clean_df.columns:
-        clean_df = clean_df[clean_df["dimension_axis"].isna() | (clean_df["dimension_axis"] == "None") | (clean_df["dimension_axis"] == "")]
+    # Helper function to parse numeric cell
+    def parse_cell(val):
+        if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
+            try:
+                n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
+                if abs(n) > 1000:
+                    return n
+            except Exception:
+                pass
+        return None
 
-    if clean_df.empty:
-        clean_df = df # Fallback if dimension flag is not present
+    # Priority 1: Exact US-GAAP concept suffix
+    if "concept" in target_df.columns:
+        for ec in exact_concepts:
+            subset = target_df[target_df["concept"].astype(str).str.lower().str.endswith(ec.lower())]
+            for _, r in subset.iterrows():
+                val = parse_cell(r[latest_col])
+                if val is not None:
+                    return val
 
-    # 1. Match standard_concept (normalized XBRL)
-    if "standard_concept" in clean_df.columns:
-        for st_cand in standard_targets:
-            match = clean_df[clean_df["standard_concept"].astype(str).str.lower() == st_cand.lower()]
-            for _, r in match.iterrows():
-                val = r[latest_col]
-                if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
-                    try:
-                        n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                        if abs(n) > 1000:
-                            return n
-                    except Exception:
-                        continue
+    # Priority 2: Standard Concept (edgartools taxonomy)
+    if "standard_concept" in target_df.columns:
+        for ec in exact_concepts:
+            subset = target_df[target_df["standard_concept"].astype(str).str.lower() == ec.lower()]
+            for _, r in subset.iterrows():
+                val = parse_cell(r[latest_col])
+                if val is not None:
+                    return val
 
-    # 2. Match raw concept ending with standard US-GAAP tag
-    if "concept" in clean_df.columns:
-        for st_cand in standard_targets:
-            match = clean_df[clean_df["concept"].astype(str).str.lower().str.endswith(st_cand.lower())]
-            for _, r in match.iterrows():
-                val = r[latest_col]
-                if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
-                    try:
-                        n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                        if abs(n) > 1000:
-                            return n
-                    except Exception:
-                        continue
-
-    # 3. Match label top-down
-    label_col = "label" if "label" in clean_df.columns else None
+    # Priority 3: Exact Label Match
+    label_col = "label" if "label" in target_df.columns else None
     if label_col:
-        for lt in label_targets:
-            for _, r in clean_df.iterrows():
+        for el in exact_labels:
+            for _, r in target_df.iterrows():
+                row_label = str(r[label_col]).lower().strip().rstrip(":")
+                if row_label == el.lower().strip():
+                    val = parse_cell(r[latest_col])
+                    if val is not None:
+                        return val
+
+    # Priority 4: Fallback Substring Match (with safety exclusions)
+    if fallback_substrings and label_col:
+        for sb in fallback_substrings:
+            for _, r in target_df.iterrows():
                 row_label = str(r[label_col]).lower().strip()
-                if any(ex in row_label for ex in exclude_terms):
-                    continue
-                if lt.lower() in row_label:
-                    val = r[latest_col]
-                    if pd.notna(val) and str(val).lower() != "none" and str(val) != "":
-                        try:
-                            n = float(str(val).replace(",", "").replace("$", "").replace("(", "-").replace(")", "").strip())
-                            if abs(n) > 1000:
-                                return n
-                        except Exception:
-                            continue
+                if sb.lower() in row_label:
+                    if any(bad in row_label for bad in ["other", "prepaid", "intersegment", "elimination", "par value"]):
+                        continue
+                    val = parse_cell(r[latest_col])
+                    if val is not None:
+                        return val
+
     return None
 
 @st.cache_data(show_spinner=False)
@@ -245,71 +247,82 @@ if run_analysis or ticker:
             raw_inc = data.get("raw_income")
             raw_bal = data.get("raw_balance")
             
-            # 1. Revenue
-            revenue = extract_metric_canonical(
+            # 1. Total Revenue
+            revenue = extract_metric_strict(
                 raw_inc,
-                ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"],
-                ["Total sales and revenues", "Total net sales", "Total revenues", "Revenue"]
+                ["SalesRevenueNet", "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
+                ["Total sales and revenues", "Total net sales", "Total revenues", "Revenue"],
+                ["sales and revenues", "revenues", "sales"]
             )
             # 2. Cost of Goods / Sales
-            cogs = extract_metric_canonical(
+            cogs = extract_metric_strict(
                 raw_inc,
                 ["CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
-                ["Cost of goods sold", "Cost of sales", "Cost of products sold"]
+                ["Cost of goods sold", "Cost of sales", "Cost of products sold"],
+                ["cost of goods", "cost of sales"]
             )
             # 3. Gross Profit
-            gross_profit = extract_metric_canonical(
+            gross_profit = extract_metric_strict(
                 raw_inc,
                 ["GrossProfit"],
-                ["Gross profit", "Gross margin"]
+                ["Gross profit", "Gross margin"],
+                ["gross profit"]
             )
             if not gross_profit and revenue and cogs:
                 gross_profit = revenue - cogs
 
             # 4. Operating Income
-            operating_income = extract_metric_canonical(
+            operating_income = extract_metric_strict(
                 raw_inc,
                 ["OperatingIncomeLoss"],
-                ["Operating profit", "Operating income", "Segment operating profit", "Earnings before income taxes"]
+                ["Operating profit", "Operating income", "Segment operating profit"],
+                ["operating income", "operating profit", "earnings before income taxes"]
             )
             
-            # 5. Balance Sheet Liquidity (Consolidated Non-Dimensional Totals)
-            current_assets = extract_metric_canonical(
+            # 5. Current Assets (Total only)
+            current_assets = extract_metric_strict(
                 raw_bal,
                 ["AssetsCurrent"],
-                ["Total current assets", "Current assets:"]
+                ["Total current assets", "Current assets"],
+                ["total current assets"]
             )
-            current_liab = extract_metric_canonical(
+            
+            # 6. Current Liabilities (Total only)
+            current_liab = extract_metric_strict(
                 raw_bal,
                 ["LiabilitiesCurrent"],
-                ["Total current liabilities", "Current liabilities:"]
+                ["Total current liabilities", "Current liabilities"],
+                ["total current liabilities"]
             )
             
-            # 6. Total Debt (Short-Term Debt + Long-Term Debt)
-            st_debt = extract_metric_canonical(
+            # 7. Total Debt (Short-Term + Long-Term)
+            st_debt = extract_metric_strict(
                 raw_bal,
                 ["DebtCurrent", "ShortTermBorrowings", "CommercialPaper"],
-                ["Short-term borrowings", "Short-term debt", "Commercial paper", "Current portion of long-term debt"]
+                ["Short-term borrowings", "Short-term debt", "Commercial paper", "Current portion of long-term debt"],
+                ["short-term borrowings", "short-term debt"]
             ) or 0
             
-            lt_debt = extract_metric_canonical(
+            lt_debt = extract_metric_strict(
                 raw_bal,
                 ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermDebt"],
-                ["Long-term debt due after one year", "Long-term debt, including current maturities", "Long-term debt", "Term debt"]
+                ["Long-term debt due after one year", "Long-term debt, including current maturities", "Long-term debt", "Term debt"],
+                ["long-term debt due after one year", "long-term debt"]
             ) or 0
             
             total_debt = st_debt + lt_debt
             
-            # 7. Stockholders' Equity
-            stockholders_equity = extract_metric_canonical(
+            # 8. Stockholders' Equity (Total only)
+            stockholders_equity = extract_metric_strict(
                 raw_bal,
                 ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"]
+                ["Total shareholders' equity", "Total stockholders' equity", "Caterpillar shareholders' equity", "ADM shareholders' equity", "Total equity"],
+                ["shareholders' equity", "stockholders' equity"]
             )
             
-            # Fallback if debt or equity line items are aggregated
-            total_assets = extract_metric_canonical(raw_bal, ["Assets"], ["Total assets", "Assets"])
-            total_liab = extract_metric_canonical(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"])
+            # Fallbacks for Total Liabilities / Accounting Identity
+            total_assets = extract_metric_strict(raw_bal, ["Assets"], ["Total assets", "Assets"], ["total assets"])
+            total_liab = extract_metric_strict(raw_bal, ["Liabilities"], ["Total liabilities", "Liabilities"], ["total liabilities"])
             
             if total_debt == 0 and total_liab:
                 total_debt = total_liab
