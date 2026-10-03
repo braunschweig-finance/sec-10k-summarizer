@@ -13,7 +13,7 @@ set_identity("Jacob Braunschweig jacob.braunschweig@gmail.com")
 
 # 2. Page Configuration (NetAdvantage / Capital IQ Style)
 st.set_page_config(page_title="SEC Financial & Corporate Governance Terminal", layout="wide")
-st.title("🏛️️ SEC Financial & Corporate Governance Terminal")
+st.title("🏛️ SEC Financial & Corporate Governance Terminal")
 st.caption("Direct SEC EDGAR Statement Extraction (XBRL), Dynamic Ratios & DEF 14A Governance")
 
 # Sidebar Controls
@@ -76,7 +76,6 @@ def get_sec_data(ticker_symbol):
         proxy_raw = ""
         
         if proxy_filings:
-            # Use .text() or raw document extraction to get the actual filing text
             latest_proxy_filing = proxy_filings[0]
             try:
                 proxy_raw = latest_proxy_filing.text()
@@ -148,11 +147,7 @@ if run_analysis or ticker:
                 selected_df = data["cashflow"]
 
             if selected_df is not None and not selected_df.empty:
-                # Format numeric columns to display cleanly with commas
-                display_df = selected_df.copy()
-                for c in display_df.columns:
-                    display_df[c] = pd.to_numeric(display_df[c], errors="ignore")
-                st.dataframe(display_df, use_container_width=True)
+                st.dataframe(selected_df, use_container_width=True)
             else:
                 st.info("Direct XBRL table not available for this statement.")
 
