@@ -83,7 +83,7 @@ def format_cell(val, unit):
         return ""
     kind = unit_kind(unit)
     if kind == "usd":
-        return f"${num / 1_000_000:,.1f}"
+        return f"${num / 1_000_000:,.0f}"
     if kind == "per_share":
         return f"${num:,.2f}"
     if kind == "shares":
@@ -264,6 +264,10 @@ def clean_governance_text(raw_text):
     if not raw_text:
         return ""
     text = raw_text
+    # Drop invisible characters and unify dashes/apostrophes so keyword searches match
+    text = re.sub(r"[\u00ad\u200b\u200c\u200d\ufeff]", "", text)
+    text = re.sub(r"[\u2010\u2011\u2012\u2013]", "-", text)
+    text = text.replace("\u2019", "'")
     # Remove lines of underscores, dashes, equals signs
     text = re.sub(r"_{2,}", " ", text)
     text = re.sub(r"-{3,}", " ", text)
@@ -279,12 +283,55 @@ def clean_governance_text(raw_text):
 # Keyword checks for the governance tiles. A hit means the proxy discusses the topic; the matching
 # sentence is shown as evidence so the reader can confirm what the filing actually says.
 GOVERNANCE_CHECKS = {
-    "Lead Independent Director": [r"lead independent director"],
+    "Lead Independent Director": [r"lead independent director", r"\blead director\b", r"presiding (?:independent )?director"],
     "Clawback Policy": [r"clawback", r"(?:incentive )?compensation recovery policy"],
-    "Anti-Hedging Policy": [r"anti-hedging", r"prohibit\w*[^.]{0,120}hedg"],
+    "Anti-Hedging Policy": [r"anti-hedging", r"hedging (?:and|or) pledging", r"prohibit\w*[^.]{0,200}hedg"],
     "Say-on-Pay Vote": [r"advisory vote to approve (?:the )?(?:compensation of (?:our )?named executive officers|(?:named )?executive (?:officer )?compensation)",
                         r"say[- ]on[- ]pay"],
 }
+
+def html_to_plain_text(html):
+    """Strips tags from an HTML document, keeping block breaks as newlines."""
+    from bs4 import BeautifulSoup
+    if isinstance(html, bytes):
+        html = html.decode("utf-8", errors="ignore")
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    # Inline XBRL proxies hide header facts in ix:header; drop them so they don't pollute the text
+    for tag in soup.find_all(["ix:header"]):
+        tag.decompose()
+    return soup.get_text("\n")
+
+def get_proxy_text(filing):
+    """
+    Returns (text, source) for a DEF 14A. Tries edgartools' text() first; if that fails or comes back
+    too short to be a full proxy, reads every HTML document in the filing directly, since some
+    proxies are split across several files or don't parse with the default extractor.
+    """
+    text, source = "", "none"
+    try:
+        text = filing.text() or ""
+        source = "primary document"
+    except Exception:
+        text = ""
+    if len(text) >= 50000:
+        return text, source
+
+    parts = []
+    try:
+        for att in filing.attachments:
+            if not att.is_html() or att.is_report() or att.empty:
+                continue
+            content = att.download()
+            if content:
+                parts.append(html_to_plain_text(content))
+    except Exception:
+        pass
+    combined = "\n\n".join(parts)
+    if len(combined) > len(text):
+        return combined, f"{len(parts)} HTML document(s) in the filing"
+    return text, source
 
 def find_evidence(text, patterns):
     """Returns the sentence around the first pattern match in the proxy, or None."""
@@ -351,6 +398,8 @@ def get_sec_data(ticker_symbol):
 
     governance_sections = {}
     governance_checks = {}
+    proxy_chars = 0
+    proxy_source = ""
     proxy_url = ""
     proxy_date = ""
     tenk_url = tenk_filings[0].url if tenk_filings else ""
@@ -359,19 +408,17 @@ def get_sec_data(ticker_symbol):
         latest_proxy = proxy_filings[0]
         proxy_url = latest_proxy.url
         proxy_date = str(latest_proxy.filing_date)
-        try:
-            proxy_raw = latest_proxy.text()
-        except Exception:
-            proxy_raw = str(latest_proxy.obj())
+        proxy_raw, proxy_source = get_proxy_text(latest_proxy)
+        proxy_chars = len(proxy_raw)
 
         proxy_flat = clean_governance_text(proxy_raw)
         for check, patterns in GOVERNANCE_CHECKS.items():
             governance_checks[check] = find_evidence(proxy_flat, patterns)
 
-        proxy_lower = proxy_raw.lower()
+        proxy_lower = proxy_flat.lower()
 
         # Prefer matches after the first 15,000 characters to bypass the table of contents and cover page
-        body_start = 15000 if len(proxy_raw) > 25000 else 0
+        body_start = 15000 if len(proxy_flat) > 25000 else 0
 
         section_targets = {
             "Board Leadership & Lead Independent Director Structure": [
@@ -401,7 +448,7 @@ def get_sec_data(ticker_symbol):
                     found_pos = pos
                     break
             if found_pos != -1:
-                governance_sections[section_title] = clean_governance_text(proxy_raw[found_pos : found_pos + 3000])
+                governance_sections[section_title] = proxy_flat[found_pos : found_pos + 3000]
             else:
                 governance_sections[section_title] = "No matching section heading was found in the proxy text."
 
@@ -416,6 +463,8 @@ def get_sec_data(ticker_symbol):
         "gov_checks": governance_checks,
         "proxy_url": proxy_url,
         "proxy_date": proxy_date,
+        "proxy_chars": proxy_chars,
+        "proxy_source": proxy_source,
         "tenk_url": tenk_url
     }
 
@@ -448,7 +497,7 @@ if ticker:
         # TAB 1: FINANCIAL STATEMENTS (10-K)
         with tab_stmt:
             st.markdown("### Audited Financial Statements (Direct SEC XBRL)")
-            st.caption("Dollar figures in **$ Millions of USD**; per-share amounts in $; share counts in millions. Zero LLM tokens consumed.")
+            st.caption("Dollar figures in **\\$ Millions of USD**; per-share amounts in \\$; share counts in millions. Zero LLM tokens consumed.")
 
             stmt_view = st.radio(
                 "Select Statement to Inspect:",
@@ -494,7 +543,7 @@ if ticker:
             for name, hit in ratio_inputs.items():
                 source_rows.append({
                     "Input": name,
-                    "Value ($M)": f"{hit['value'] / 1_000_000:,.1f}" if hit else "Not reported",
+                    "Value ($M)": f"{hit['value'] / 1_000_000:,.0f}" if hit else "Not reported",
                     "Filed Line Item": hit["label"] if hit else "",
                     "XBRL Concept": hit["concept"] if hit else "",
                     "Period": hit["period"] if hit else "",
@@ -508,8 +557,12 @@ if ticker:
 
             if data["gov_sections"]:
                 # Key Governance Indicators: keyword evidence from the proxy, not assumed values
-                st.caption(f"Latest DEF 14A filed {data['proxy_date']}. Each tile shows whether the proxy discusses the topic; "
+                st.caption(f"Latest DEF 14A filed {data['proxy_date']} ({data['proxy_chars']:,} characters of text read from "
+                           f"{data['proxy_source']}). Each tile shows whether the proxy discusses the topic; "
                            "read the quoted evidence below to confirm what it says.")
+                if data["proxy_chars"] < 20000:
+                    st.warning("Very little text could be read from this proxy statement, so the results below may be incomplete. "
+                               "Open the DEF 14A link above to check the filing directly.")
                 gov_cols = st.columns(len(GOVERNANCE_CHECKS))
                 for col, (check, evidence) in zip(gov_cols, data["gov_checks"].items()):
                     col.metric(check, "Discussed" if evidence else "Not found")
