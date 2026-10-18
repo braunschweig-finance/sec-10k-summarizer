@@ -120,6 +120,19 @@ def clean_statement_df(df):
     )
     work = work[has_number]
 
+    # Drop segment rows that just repeat their consolidated line (e.g., CAT's interest expense,
+    # which is all Financial Products), so the same amount doesn't appear twice
+    if "dimension" in work.columns and "concept" in work.columns:
+        is_dim = work["dimension"].fillna(False).astype(bool)
+        parent_values = {
+            r["concept"]: tuple(r[c] for c in period_cols)
+            for _, r in work[~is_dim].iterrows()
+        }
+        repeats = work[is_dim].apply(
+            lambda r: parent_values.get(r["concept"]) == tuple(r[c] for c in period_cols), axis=1
+        )
+        work = work.drop(repeats[repeats].index)
+
     units = work["unit"] if "unit" in work.columns else pd.Series("usd", index=work.index)
     cleaned = pd.DataFrame(index=work.index)
     cleaned["Line Item"] = work[label_col] if label_col else work.index.astype(str)
@@ -568,7 +581,7 @@ if ticker:
                     col.metric(check, "Discussed" if evidence else "Not found")
                 with st.expander("Evidence from the proxy statement"):
                     for check, evidence in data["gov_checks"].items():
-                        st.markdown(f"**{check}:** " + (f"\"{evidence}\"" if evidence else "No matching text found."))
+                        st.markdown(f"**{check}:** " + (f"\"{evidence.replace('$', chr(92) + '$')}\"" if evidence else "No matching text found."))
 
                 st.markdown("---")
 
@@ -576,10 +589,14 @@ if ticker:
                 for heading, text_body in data["gov_sections"].items():
                     with st.container(border=True):
                         st.subheader(f"📑 {heading}")
-                        # Filter out stray single characters or short noise lines
-                        clean_paragraphs = [p for p in text_body.split(". ") if len(p.strip()) > 20]
-                        formatted_text = ". ".join(clean_paragraphs[:12])
-                        st.write(formatted_text + ("." if formatted_text and not formatted_text.endswith(".") else ""))
+                        # Show the passage as filed, cut at the last full sentence. (Splitting on ". " and
+                        # dropping short pieces used to remove names after "Mr." and "Ms.")
+                        passage = text_body[:2000]
+                        last_stop = passage.rfind(". ")
+                        if len(text_body) > 2000 and last_stop > 500:
+                            passage = passage[:last_stop + 1]
+                        # Escape $ so Streamlit doesn't read dollar amounts as math
+                        st.write(passage.replace("$", "\\$"))
             else:
                 st.warning("No DEF 14A proxy filing located for this ticker.")
 
