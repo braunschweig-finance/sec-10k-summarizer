@@ -12,7 +12,8 @@ from docx import Document
 from edgar import Company, set_identity
 
 # SEC Compliance Identity
-set_identity("Jacob Braunschweig jacob.braunschweig@gmail.com")
+SEC_IDENTITY = "Jacob Braunschweig jacob.braunschweig@gmail.com"
+set_identity(SEC_IDENTITY)
 
 def is_date_or_period_column(col_name):
     """Detects whether a column represents an audited fiscal reporting period."""
