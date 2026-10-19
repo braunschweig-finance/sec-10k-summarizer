@@ -17,9 +17,17 @@ import sec_core
 app = FastAPI(title="SEC Financial & Corporate Governance Terminal API")
 
 # The web site lives on a different address (Vercel), so the browser needs permission to call this API.
-# ALLOWED_ORIGINS is a comma-separated list, e.g. "https://sec-terminal.vercel.app"
-allowed = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=allowed, allow_methods=["GET", "POST"], allow_headers=["*"])
+# ALLOWED_ORIGINS is an optional comma-separated list, e.g. "https://sec-terminal.vercel.app". Left blank
+# (Render's blueprint creates it empty), any site may call the API. Any *.vercel.app address is always
+# allowed, since Vercel gives each deploy its own address.
+allowed = [o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()] or ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed,
+    allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app",
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 
 @lru_cache(maxsize=64)
