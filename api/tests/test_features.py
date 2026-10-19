@@ -1,0 +1,186 @@
+"""
+Offline tests for trends, Pay Efficiency history, peer ranking and the export files.
+SEC is replaced by small hand-made companyfacts and Pay Versus Performance files, so the expected
+numbers can be checked by hand. Run from api/:  python -m pytest tests
+"""
+import io
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pytest
+from openpyxl import load_workbook
+
+import export
+import peers
+import sec_core
+
+
+def fact(val, start, end, accn, filed, form="10-K"):
+    return {"val": val, "start": start, "end": end, "accn": accn, "filed": filed, "form": form}
+
+
+def year_facts(year, val, restated=None):
+    """One fiscal year (calendar) as first filed in its own 10-K, plus an optional later restatement."""
+    s, e = f"{year}-01-01", f"{year}-12-31"
+    rows = [fact(val, s, e, f"0000018230-{str(year + 1)[2:]}-000008", f"{year + 1}-02-15")]
+    if restated is not None:
+        rows.append(fact(restated, s, e, f"0000018230-{str(year + 2)[2:]}-000008", f"{year + 2}-02-15"))
+    # A quarter and a 10-Q, both of which must be ignored
+    rows.append(fact(val / 4, f"{year}-10-01", e, "q", f"{year + 1}-02-15"))
+    rows.append(fact(val * 9, s, e, "10q", f"{year}-11-01", form="10-Q"))
+    return rows
+
+
+GAAP = {
+    "Revenues": {"units": {"USD": sum((year_facts(y, v) for y, v in
+                                       [(2019, 50e9), (2020, 40e9), (2021, 50e9), (2022, 60e9), (2023, 67e9), (2024, 64e9), (2025, 68e9)]), [])}},
+    "CostOfGoodsAndServicesSold": {"units": {"USD": sum((year_facts(y, v) for y, v in
+                                                         [(2021, 35e9), (2022, 42e9), (2023, 44e9), (2024, 42e9), (2025, 45e9)]), [])}},
+    # Operating income restated later for 2024: the trend must keep the first-reported 13e9
+    "OperatingIncomeLoss": {"units": {"USD": sum((year_facts(y, v, 13.5e9 if y == 2024 else None) for y, v in
+                                                  [(2021, 6e9), (2022, 8e9), (2023, 13e9), (2024, 13e9), (2025, 11e9)]), [])}},
+    "NetIncomeLoss": {"units": {"USD": sum((year_facts(y, v) for y, v in
+                                            [(2021, 6.5e9), (2022, 6.7e9), (2023, 10e9), (2024, 10.8e9), (2025, 8.9e9)]), [])}},
+}
+
+
+def pvp_xml(years):
+    """A minimal Pay Versus Performance instance: TSR per year, and CEO pay actually paid per CEO."""
+    ctx, facts = [], []
+    for i, (end, ceos) in enumerate(years):
+        ctx.append(f'<xbrli:context id="c{i}"><xbrli:entity><xbrli:identifier scheme="x">1</xbrli:identifier></xbrli:entity>'
+                   f'<xbrli:period><xbrli:startDate>{end[:4]}-01-01</xbrli:startDate><xbrli:endDate>{end}</xbrli:endDate></xbrli:period></xbrli:context>')
+        facts.append(f'<ecd:TotalShareholderRtnAmt contextRef="c{i}">100</ecd:TotalShareholderRtnAmt>')
+        for j, (who, cap) in enumerate(ceos):
+            ctx.append(f'<xbrli:context id="c{i}_{j}"><xbrli:entity><xbrli:identifier scheme="x">1</xbrli:identifier>'
+                       f'<xbrli:segment><xbrldi:explicitMember dimension="ecd:IndividualAxis">{who}</xbrldi:explicitMember></xbrli:segment></xbrli:entity>'
+                       f'<xbrli:period><xbrli:startDate>{end[:4]}-01-01</xbrli:startDate><xbrli:endDate>{end}</xbrli:endDate></xbrli:period></xbrli:context>')
+            facts.append(f'<ecd:PeoActuallyPaidCompAmt contextRef="c{i}_{j}">{cap}</ecd:PeoActuallyPaidCompAmt>')
+            facts.append(f'<ecd:PeoTotalCompAmt contextRef="c{i}_{j}">{cap / 2}</ecd:PeoTotalCompAmt>')
+    return ('<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:xbrldi="http://xbrl.org/2006/xbrldi" '
+            'xmlns:ecd="http://xbrl.sec.gov/ecd/2024">' + "".join(ctx) + "".join(facts) + "</xbrli:xbrl>").encode()
+
+
+PVP = pvp_xml([
+    ("2023-12-31", [("CAT:Mr.UmplebyMember", 26e6)]),
+    ("2024-12-31", [("CAT:Mr.UmplebyMember", 39e6)]),
+    # Two CEOs in the latest year (CAT's real FY2025 amounts): added together
+    ("2025-12-31", [("CAT:Mr.UmplebyMember", 82_309_936), ("CAT:Mr.CreedMember", 49_423_389)]),
+])
+
+
+@pytest.fixture
+def fake_sec(monkeypatch):
+    proxy = SimpleNamespace(accession_no="0001308179-26-000358", url="https://www.sec.gov/proxy", filing_date="2026-04-30")
+    company = SimpleNamespace(cik=18230, name="Caterpillar Inc.", get_filings=lambda form: [proxy])
+    monkeypatch.setattr(sec_core, "Company", lambda t: company)
+    monkeypatch.setattr(sec_core, "companyfacts", lambda cik: GAAP)
+    monkeypatch.setattr(sec_core, "instance_url", lambda cik, accn: "https://x/proxy_htm.xml")
+    monkeypatch.setattr(sec_core, "sec_fetch", lambda url: PVP)
+
+
+def test_trends_take_last_five_years_as_first_reported(fake_sec):
+    t = sec_core.get_trends("CAT")
+    assert [y["fiscal_year"] for y in t["years"]] == [2021, 2022, 2023, 2024, 2025]
+    y24 = t["years"][3]
+    assert y24["lines"]["Operating Income"]["value_m"] == 13_000            # not the 13.5B restatement
+    assert y24["lines"]["Operating Income"]["accn"] == "0000018230-25-000008"
+    assert y24["lines"]["Revenue"]["concept"] == "us-gaap:Revenues"
+    # No GrossProfit tag: derived from revenue - cost of revenue, and labeled as derived
+    assert y24["lines"]["Gross Profit"]["value_m"] == 64_000 - 42_000
+    assert y24["lines"]["Gross Profit"]["concept"].startswith("Derived")
+    assert y24["margins"]["Gross Margin"] == pytest.approx(22 / 64 * 100)    # 34.375%
+    assert y24["margins"]["Operating Margin"] == pytest.approx(13 / 64 * 100)  # 20.3125%
+    assert y24["margins"]["Net Margin"] == pytest.approx(10.8 / 64 * 100)    # 16.875%
+
+
+def test_pay_efficiency_history_and_latest(fake_sec):
+    pe = sec_core.get_pay_efficiency("CAT")
+    assert pe["fy_end"] == "2025-12-31"
+    # (82,309,936 + 49,423,389) / 11,000,000,000 = 1.1976%
+    assert pe["ceo_pay_m"] == pytest.approx(131.733325)
+    assert pe["value"] == "1.20%"
+    assert pe["ceo_count"] == 2 and pe["ceos"] == ["Mr. Umpleby", "Mr. Creed"]
+    assert [h["fy_end"] for h in pe["history"]] == ["2023-12-31", "2024-12-31", "2025-12-31"]
+    assert pe["history"][0]["pct"] == pytest.approx(26 / 13_000 * 100)   # 0.20%
+    assert pe["history"][1]["pct"] == pytest.approx(39 / 13_000 * 100)   # 0.30%, first-reported 13.0B
+    assert pe["peers"]["peer_year"] == 2025 and pe["peers"]["count"] == 120
+
+
+def test_peer_rank_counts_by_hand():
+    group = [p["pct"] for p in peers.PEERS[2025] if p["ticker"] != "CAT"]
+    r = peers.rank("CAT", "2025-12-31", 1.18, "operating")
+    assert r["higher_count"] == sum(1 for v in group if v > 1.18)
+    assert r["lower_than_pct"] == pytest.approx(r["higher_count"] / len(group) * 100)
+    s = sorted(group)
+    assert r["median"] == pytest.approx((s[59] + s[60]) / 2)               # 120 values: average of the middle two
+
+
+def test_peer_rank_leaves_company_out_and_falls_back_a_year():
+    a = peers.rank("A", "2025-10-31", 1.0, "operating")
+    assert a["count"] == len(peers.PEERS[2025]) - 1                    # Agilent is in the sample
+    later = peers.rank("CAT", "2026-12-31", 1.0, "pretax")
+    assert later["peer_year"] == 2025 and len(later["notes"]) == 2
+    assert peers.rank("CAT", "2025-12-31", None, "") is None
+    assert peers.fiscal_year("2026-01-03") == 2025                     # 52/53-week year ending in early January
+
+
+def test_peer_file_matches_its_source_math():
+    # Agilent FY2022 from the research data: 10,456,854 / 1,618,000,000
+    a22 = next(p for p in peers.PEERS[2022] if p["ticker"] == "A")
+    assert a22["pct"] == pytest.approx(10_456_854 / 1_618_000_000 * 100)
+    assert a22["pvp_accn"] == "0000950170-24-010096"
+
+
+def export_input():
+    pe = sec_core.get_pay_efficiency("CAT")
+    tr = sec_core.get_trends("CAT")
+    report = {
+        "ticker": "CAT", "name": "Caterpillar Inc.’s test", "tenk_url": "https://www.sec.gov/10k",
+        "statements": {"income": {"periods": ["2025-12-31 (FY)"], "rows": [{"label": "Revenue", "values": ["$68,000"]}]}, "balance": None, "cashflow": None},
+        "ratios": {"Gross Margin": "33.8%", "Operating Margin": "16.2%", "Current Ratio": "1.44x", "Total Liabilities-to-Equity": "3.62x"},
+        "inputs": {"Revenue": {"value_m": 68000.0, "label": "Total sales and revenues", "concept": "us-gaap_Revenues", "period": "2025-12-31 (FY)"},
+                   "Gross Profit": None},
+    }
+    return {"report": report, "pay_efficiency": pe, "trends": tr, "notes": []}
+
+
+def test_xlsx_export_has_every_sheet_and_numbers(fake_sec):
+    wb = load_workbook(io.BytesIO(export.build_xlsx(export_input())))
+    assert wb.sheetnames == ["Summary", "Ratio inputs", "Pay Efficiency", "Trends", "Income statement"]
+    pe = wb["Pay Efficiency"]
+    assert pe["E4"].value == pytest.approx(131.733325 / 11_000)   # stored as a fraction, shown as 1.20%
+    tr = wb["Trends"]
+    assert tr["A6"].value == 2025 and tr["C6"].value == 68_000 and tr["I6"].value == pytest.approx(11 / 68)
+    assert wb["Ratio inputs"]["C3"].value == "Not reported"
+
+
+def test_pdf_export_builds(fake_sec):
+    data = export.build_pdf(export_input())
+    assert data[:5] == b"%PDF-" and len(data) > 2000
+
+
+def test_export_skips_missing_parts():
+    d = {"report": {"ticker": "JPM", "name": "JPMorgan", "tenk_url": "", "statements": {}, "ratios": {"Gross Margin": "N/A"}, "inputs": {}},
+         "pay_efficiency": None, "trends": None, "notes": ["Trends left out: timed out"]}
+    assert load_workbook(io.BytesIO(export.build_xlsx(d))).sheetnames == ["Summary", "Ratio inputs"]
+    assert export.build_pdf(d)[:5] == b"%PDF-"
+
+
+def test_api_routes(fake_sec, monkeypatch):
+    from fastapi.testclient import TestClient
+    import main
+    report = export_input()["report"]
+    monkeypatch.setattr(sec_core, "get_financial_report", lambda t: report)
+    for f in [main.cached_financials, main.cached_pay_efficiency, main.cached_trends]:
+        f.cache_clear()
+    client = TestClient(main.app)
+    assert [y["fiscal_year"] for y in client.get("/api/trends/cat").json()["years"]][-1] == 2025
+    x = client.get("/api/export/CAT.xlsx")
+    assert x.status_code == 200 and x.headers["content-disposition"] == 'attachment; filename="CAT_SEC_Terminal.xlsx"'
+    p = client.get("/api/export/CAT.pdf")
+    assert p.status_code == 200 and p.content[:5] == b"%PDF-"
+    assert client.get("/api/export/BAD!!.pdf").status_code == 400
