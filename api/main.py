@@ -51,6 +51,23 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/sec-check")
+def sec_check():
+    """One direct request to SEC EDGAR, to tell a blocked or throttled server apart from a slow one."""
+    import httpx
+    url = "https://data.sec.gov/submissions/CIK0000018230.json"  # Caterpillar's filing index
+    started = time.time()
+    try:
+        r = httpx.get(url, headers={"User-Agent": sec_core.SEC_IDENTITY}, timeout=15)
+        result = {"status": r.status_code, "seconds": round(time.time() - started, 2), "bytes": len(r.content)}
+        if r.status_code != 200:
+            result["body_start"] = r.text[:300]
+    except Exception as e:
+        result = {"error": repr(e), "seconds": round(time.time() - started, 2)}
+    print(f"[sec-check] {result}", flush=True)
+    return result
+
+
 @app.get("/api/company/{ticker}")
 def company(ticker: str):
     ticker = ticker.upper().strip()
