@@ -6,6 +6,7 @@ Run locally:  uvicorn main:app --reload   (from the api/ folder)
 import multiprocessing
 import os
 import re
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -63,10 +64,14 @@ def _timed(step, ticker, fn):
 # system stops only that child (it volunteers via oom_score_adj) and the page gets a plain explanation.
 _fork = multiprocessing.get_context("fork")
 _child_slot = threading.Semaphore(1)
-CHILD_LIMIT = 240  # seconds; a stuck child is stopped so it can't hold the slot forever
+CHILD_LIMIT = 120  # seconds; a stuck child is stopped so it can't hold the slot forever
 
 
 def _child(fn, ticker, conn):
+    # Another thread may have been mid-print when this process was copied, leaving the copy's stdout lock held
+    # forever. Fresh stdout/stderr objects have their own locks.
+    sys.stdout = open(1, "w", buffering=1, closefd=False)
+    sys.stderr = open(2, "w", buffering=1, closefd=False)
     try:
         with open("/proc/self/oom_score_adj", "w") as f:
             f.write("1000")
