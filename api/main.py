@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+import export
 import sec_core
 
 app = FastAPI(title="SEC Financial & Corporate Governance Terminal API")
@@ -57,6 +58,11 @@ def cached_governance(ticker):
 @lru_cache(maxsize=64)
 def cached_pay_efficiency(ticker):
     return _timed("Pay Efficiency", ticker, sec_core.get_pay_efficiency)
+
+
+@lru_cache(maxsize=64)
+def cached_trends(ticker):
+    return _timed("Trends", ticker, sec_core.get_trends)
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
@@ -115,6 +121,11 @@ def governance(ticker: str):
 @app.get("/api/pay-efficiency/{ticker}")
 def pay_efficiency(ticker: str):
     return lookup(cached_pay_efficiency, ticker)
+
+
+@app.get("/api/trends/{ticker}")
+def trends(ticker: str):
+    return lookup(cached_trends, ticker)
 
 
 def full_report(ticker):
@@ -243,4 +254,38 @@ def memo_docx(req: DocxRequest):
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{report["ticker"]}_Institutional_Research_Brief.docx"'},
+    )
+
+
+def export_data(ticker):
+    """Everything the export files show, from the same cached lookups as the page. A part that fails is left out and noted."""
+    data = {"report": company(ticker), "notes": []}
+    for key, fn in [("pay_efficiency", pay_efficiency), ("trends", trends)]:
+        try:
+            data[key] = fn(ticker)
+        except HTTPException as e:
+            data[key] = None
+            data["notes"].append(f"{key.replace('_', ' ').title()} left out: {e.detail}")
+    return data
+
+
+@app.get("/api/export/{ticker}.xlsx")
+def export_xlsx(ticker: str):
+    data = export_data(ticker)
+    t = data["report"]["ticker"]
+    return Response(
+        content=export.build_xlsx(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{t}_SEC_Terminal.xlsx"'},
+    )
+
+
+@app.get("/api/export/{ticker}.pdf")
+def export_pdf(ticker: str):
+    data = export_data(ticker)
+    t = data["report"]["ticker"]
+    return Response(
+        content=export.build_pdf(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{t}_SEC_Terminal.pdf"'},
     )

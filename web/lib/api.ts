@@ -1,4 +1,4 @@
-import type { Governance, PayEfficiency, Report } from "./types";
+import type { Governance, PayEfficiency, Report, Trends } from "./types";
 import { SAMPLE_CAT } from "./sample";
 
 // Set on Vercel to the Render address of the Python API. Empty means sample mode.
@@ -36,6 +36,20 @@ export async function fetchPayEfficiency(ticker: string): Promise<PayEfficiency>
   const res = await callApi(`/api/pay-efficiency/${encodeURIComponent(ticker)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
   return res.json();
+}
+
+export async function fetchTrends(ticker: string): Promise<Trends> {
+  if (!API_URL) throw new Error("Five-year trends load from the 10-Ks once the API is online.");
+  const res = await callApi(`/api/trends/${encodeURIComponent(ticker)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
+  return res.json();
+}
+
+// Excel or PDF of the ratios, Pay Efficiency, peer ranking and trends, built by the API from the same data as the page
+export async function downloadExport(ticker: string, kind: "xlsx" | "pdf") {
+  const res = await callApi(`/api/export/${encodeURIComponent(ticker)}.${kind}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Couldn't build the file (${res.status})`);
+  saveBlob(await res.blob(), `${ticker}_SEC_Terminal.${kind}`);
 }
 
 export async function fetchMemo(ticker: string): Promise<{ text: string; usage: { input: number; output: number } | null }> {

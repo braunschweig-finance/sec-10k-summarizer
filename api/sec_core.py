@@ -10,11 +10,14 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import date
+from functools import lru_cache
 
 import httpx
 import pandas as pd
 from docx import Document
 from edgar import Company, set_identity
+
+import peers
 
 # SEC Compliance Identity
 SEC_IDENTITY = "Jacob Braunschweig jacob.braunschweig@gmail.com"
@@ -620,7 +623,30 @@ def get_pay_efficiency(ticker_symbol):
     fy_end = max(pvp)
     v = pvp[fy_end]
 
-    gaap = json.loads(sec_fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))["facts"].get("us-gaap", {})
+    gaap = companyfacts(cik)
+    years = [pay_efficiency_year(gaap, cik, fy, pvp[fy]) for fy in sorted(pvp)]
+    latest = years[-1]
+    return {
+        "available": True,
+        **latest,
+        "ceo_count": v.get("ceo_count", 1),
+        "ceos": v.get("ceos", []),
+        "sct_total_m": v["peo_total_comp"] / 1_000_000 if v.get("peo_total_comp") is not None else None,
+        "pay_concept": "ecd:PeoActuallyPaidCompAmt",
+        "proxy_url": proxy.url,
+        "proxy_date": str(proxy.filing_date),
+        "proxy_accn": accn,
+        # Every year in the proxy's Pay Versus Performance table (up to five), oldest first, for the trend chart
+        "history": [{k: y[k] for k in HISTORY_KEYS} for y in years],
+        "peers": peers.rank(ticker_symbol, latest["fy_end"], latest["pct"], latest["denominator"]),
+    }
+
+
+HISTORY_KEYS = ["fy_end", "value", "pct", "ceo_pay_m", "op_income_m", "op_concept", "denominator", "tenk_accn"]
+
+
+def pay_efficiency_year(gaap, cik, fy_end, v):
+    """Pay Efficiency for one fiscal year of the Pay Versus Performance table, with its 10-K source."""
     denominator = "operating"
     op, op_tag, op_accn = tenk_value(gaap, OP_TAGS, fy_end)
     if op is None:
@@ -633,29 +659,102 @@ def get_pay_efficiency(ticker_symbol):
         flags.append(f"{v['ceo_count']} people served as CEO this year; their pay is added together.")
 
     cap = v["peo_cap"]
+    pct = None
     if op is None:
         value = "N/A"
         flags.append("No operating or pretax income found in a 10-K for this fiscal year.")
     elif op <= 0:
         value = "N/M (operating loss)"
     else:
-        value = f"{cap / op * 100:.2f}%"
+        pct = cap / op * 100
+        value = f"{pct:.2f}%"
     return {
-        "available": True,
         "value": value,
+        "pct": pct,
         "fy_end": fy_end,
         "ceo_pay_m": cap / 1_000_000,
-        "ceo_count": v.get("ceo_count", 1),
-        "ceos": v.get("ceos", []),
-        "sct_total_m": v["peo_total_comp"] / 1_000_000 if v.get("peo_total_comp") is not None else None,
-        "pay_concept": "ecd:PeoActuallyPaidCompAmt",
-        "proxy_url": proxy.url,
-        "proxy_date": str(proxy.filing_date),
-        "proxy_accn": accn,
         "op_income_m": op / 1_000_000 if op is not None else None,
         "op_concept": f"us-gaap:{op_tag}" if op_tag else "",
         "denominator": denominator,
         "tenk_accn": op_accn or "",
-        "tenk_url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{op_accn.replace('-', '')}/" if op_accn else "",
+        "tenk_url": filing_folder(cik, op_accn),
         "flags": flags,
     }
+
+
+def filing_folder(cik, accn):
+    return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accn.replace('-', '')}/" if accn else ""
+
+
+@lru_cache(maxsize=1)
+def companyfacts(cik):
+    """us-gaap facts from SEC's companyfacts file. Only the last company is kept (the file can be tens of MB and
+    the free server has 512 MB), which is enough for the trends lookup that follows the Pay Efficiency one."""
+    return json.loads(sec_fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))["facts"].get("us-gaap", {})
+
+
+# ---------- Multi-year trends (same companyfacts file, each year's own 10-K) ----------
+
+TREND_TAGS = {
+    "Revenue": ["Revenues", "RevenuesNetOfInterestExpense", "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"],
+    "Cost of Revenue": ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold",
+                        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
+    "Gross Profit": ["GrossProfit"],
+    "Operating Income": OP_TAGS,
+    "Net Income": ["NetIncomeLoss"],
+}
+TREND_YEARS = 5
+
+
+def fiscal_year_ends(gaap, tags):
+    """End dates of full fiscal years reported in 10-Ks for any of the tags, newest last. Dates within 10 days count as one year."""
+    ends = sorted({r["end"] for tag in tags for r in gaap.get(tag, {}).get("units", {}).get("USD", [])
+                   if r.get("form") == "10-K" and "start" in r and 340 <= days_apart(r["start"], r["end"]) <= 390})
+    merged = []
+    for e in ends:
+        if merged and days_apart(merged[-1], e) <= 10:
+            merged[-1] = e
+        else:
+            merged.append(e)
+    return merged
+
+
+def trend_year(gaap, cik, fy_end):
+    """One fiscal year's income-statement lines (as first reported in a 10-K) and the margins computed from them."""
+    lines = {}
+    for name, tags in TREND_TAGS.items():
+        val, tag, accn = tenk_value(gaap, tags, fy_end)
+        lines[name] = {"value_m": val / 1_000_000, "concept": f"us-gaap:{tag}", "accn": accn, "url": filing_folder(cik, accn)} if val is not None else None
+    if lines["Revenue"] is None:
+        # Banks: net interest income + noninterest income, the same rule as the ratio cards
+        nii, _, accn = tenk_value(gaap, ["InterestIncomeExpenseNet"], fy_end)
+        nonint, _, _ = tenk_value(gaap, ["NoninterestIncome"], fy_end)
+        if nii is not None and nonint is not None:
+            lines["Revenue"] = {"value_m": (nii + nonint) / 1_000_000, "concept": "Derived: InterestIncomeExpenseNet + NoninterestIncome",
+                                "accn": accn, "url": filing_folder(cik, accn)}
+    rev, cogs = lines["Revenue"], lines["Cost of Revenue"]
+    if lines["Gross Profit"] is None and rev and cogs:
+        lines["Gross Profit"] = {"value_m": rev["value_m"] - cogs["value_m"], "concept": "Derived: Revenue - Cost of Revenue",
+                                 "accn": rev["accn"], "url": rev["url"]}
+
+    def margin(name):
+        line = lines[name]
+        return line["value_m"] / rev["value_m"] * 100 if line and rev and rev["value_m"] > 0 else None
+
+    return {
+        "fy_end": fy_end,
+        "fiscal_year": peers.fiscal_year(fy_end),
+        "lines": lines,
+        "margins": {"Gross Margin": margin("Gross Profit"), "Operating Margin": margin("Operating Income"), "Net Margin": margin("Net Income")},
+    }
+
+
+def get_trends(ticker_symbol):
+    """The last five fiscal years of revenue, profits and margins, each from the 10-K that first reported it."""
+    company = Company(ticker_symbol)
+    cik = str(company.cik).zfill(10)
+    gaap = companyfacts(cik)
+    ends = fiscal_year_ends(gaap, TREND_TAGS["Revenue"] + TREND_TAGS["Net Income"])[-TREND_YEARS:]
+    print(f"[{ticker_symbol}] trends: {len(ends)} fiscal years", flush=True)
+    return {"ticker": ticker_symbol, "years": [trend_year(gaap, cik, e) for e in ends]}

@@ -3,12 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import type { Report } from "@/lib/types";
-import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport } from "@/lib/api";
+import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchTrends } from "@/lib/api";
 import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
+import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
+  { id: "trends", label: "Trends" },
+  { id: "compare", label: "Compare" },
   { id: "statements", label: "Statements" },
   { id: "governance", label: "Governance" },
   { id: "memo", label: "AI Memo" },
@@ -48,12 +51,17 @@ export default function Terminal() {
             setReport((prev) => (prev && prev.ticker === t ? { ...prev, governanceError: (e as Error).message } : prev))
           );
       }
+      const update = (patch: Partial<Report>) =>
+        current.current === t && setReport((prev) => (prev && prev.ticker === t ? { ...prev, ...patch } : prev));
       if (!r.payEfficiency) {
+        // Trends start after Pay Efficiency, so the API reads SEC's companyfacts file once for both
         fetchPayEfficiency(t)
-          .then((p) => current.current === t && setReport((prev) => (prev && prev.ticker === t ? { ...prev, payEfficiency: p } : prev)))
-          .catch((e) =>
-            current.current === t &&
-            setReport((prev) => (prev && prev.ticker === t ? { ...prev, payEfficiencyError: (e as Error).message } : prev))
+          .then((p) => update({ payEfficiency: p }))
+          .catch((e) => update({ payEfficiencyError: (e as Error).message }))
+          .finally(() =>
+            fetchTrends(t)
+              .then((tr) => update({ trends: tr }))
+              .catch((e) => update({ trendsError: (e as Error).message }))
           );
       }
     } catch (e) {
@@ -197,7 +205,8 @@ export default function Terminal() {
                     {report.name} <span className="font-mono text-2xl font-normal text-brass">{report.ticker}</span>
                   </h2>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <ExportButtons ticker={report.ticker} />
                   {report.tenk_url && (
                     <a href={report.tenk_url} target="_blank" rel="noreferrer" className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass">
                       10-K on EDGAR ↗
@@ -246,6 +255,8 @@ export default function Terminal() {
                   transition={{ duration: 0.25 }}
                 >
                   {tab === "ratios" && <RatiosPanel report={report} />}
+                  {tab === "trends" && <TrendsPanel report={report} />}
+                  {tab === "compare" && <ComparePanel report={report} />}
                   {tab === "statements" && <StatementsPanel report={report} />}
                   {tab === "governance" && <GovernancePanel report={report} />}
                   {tab === "memo" && <MemoPanel report={report} />}

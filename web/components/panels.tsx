@@ -5,6 +5,7 @@ import { AnimatePresence, motion, type Variants } from "motion/react";
 import type { PayEfficiency, Report, Statement } from "@/lib/types";
 import { API_URL, downloadDocx, fetchMemo, saveBlob } from "@/lib/api";
 import { CountUp, onSpotlightMove } from "./fx";
+import { PeerRank } from "./features";
 
 const fmtM = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -200,6 +201,7 @@ function PayEfficiencyCard({ pe, error }: { pe: PayEfficiency | null; error?: st
         {fmtPay(pe.ceo_pay_m)} ÷ {pe.op_income_m === null ? "?" : `${fmtM(pe.op_income_m)}M`} = {pe.value}
         {pe.sct_total_m !== null && <> · Summary Compensation Table total: {fmtPay(pe.sct_total_m)}</>}
       </div>
+      <PeerRank pe={pe} />
       {pe.flags.length > 0 && (
         <ul className="flex flex-col gap-1 text-xs text-brass">
           {pe.flags.map((f) => (
