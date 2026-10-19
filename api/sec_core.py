@@ -307,14 +307,18 @@ def html_to_plain_text(html):
 
 def get_proxy_text(filing):
     """
-    Returns (text, source) for a DEF 14A. Tries edgartools' text() first; if that fails or comes back
-    too short to be a full proxy, reads every HTML document in the filing directly, since some
-    proxies are split across several files or don't parse with the default extractor.
+    Returns (text, source) for a DEF 14A. Reads the filing's primary HTML document directly; if that comes back
+    too short to be a full proxy, reads every HTML document in the filing, since some proxies are split across
+    several files. (edgartools' filing.text() loads the whole submission, images included: Goldman Sachs' proxy
+    took over 500 MB that way, more than the free server has.)
     """
     text, source = "", "none"
     try:
-        text = filing.text() or ""
-        source = "primary document"
+        doc = getattr(filing, "primary_document", "")
+        if doc and doc.lower().endswith((".htm", ".html")):
+            url = f"https://www.sec.gov/Archives/edgar/data/{int(filing.cik)}/{filing.accession_no.replace('-', '')}/{doc}"
+            text = html_to_plain_text(sec_fetch(url))
+            source = "primary document"
     except Exception:
         text = ""
     if len(text) >= 50000:

@@ -3,11 +3,19 @@ on:
   push:
     branches: [fix/jpm-load-error]
 jobs:
-  profile:
+  repro:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }
-      - run: pip install -q -r api/requirements.txt
-      - run: python .github/diag/profile.py GS,JPM,CAT,AAPL
+      - name: Run the API in a 512 MB container (like Render free) and make the page's calls
+        run: |
+          docker run -d --name api --memory=512m --memory-swap=512m -p 8000:8000 -v $PWD/api:/app -w /app python:3.13-slim \
+            sh -c "pip install -q -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
+          for i in $(seq 1 90); do curl -sf localhost:8000/health >/dev/null && break; sleep 2; done
+          (while docker exec api grep '^anon ' /sys/fs/cgroup/memory.stat 2>/dev/null | cut -d' ' -f2; do sleep 0.2; done | sort -n | tail -1 | awk '{printf "highest program memory during lookups: %d MiB\n", $1/1048576}' > peak.txt) &
+          .github/diag/browser.sh CAT JPM GS AAPL MSFT BAC C WFC XOM AMZN GOOGL META NVDA BRK-B MS JPM || true
+          curl -s -o x.xlsx -w "JPM excel %{http_code} %{size_download} bytes\n" localhost:8000/api/export/JPM.xlsx
+          curl -s -o x.pdf -w "GS pdf %{http_code} %{size_download} bytes\n" localhost:8000/api/export/GS.pdf
+          curl -s localhost:8000/api/governance/GS | head -c 600; echo
+          docker stop api >/dev/null; sleep 1; cat peak.txt
+          docker logs api 2>&1 | grep -iE 'killed|error|failed|traceback' | tail -20

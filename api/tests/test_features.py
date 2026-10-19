@@ -204,21 +204,41 @@ def test_companyfacts_keeps_only_needed_rows_and_reads_once(monkeypatch):
     assert "0000018230" not in sec_core._facts and len(sec_core._facts) == sec_core.FACTS_CACHE_SIZE
 
 
-def _killed(ticker):
-    import os, signal
-    os.kill(os.getpid(), signal.SIGKILL)
+
+def test_proxy_text_reads_primary_document_only(monkeypatch):
+    import sec_core
+    from types import SimpleNamespace
+    body = "<html><body><p>" + "Our lead independent director chairs executive sessions. " * 1200 + "</p></body></html>"
+    fetched = []
+    monkeypatch.setattr(sec_core, "sec_fetch", lambda url: fetched.append(url) or body.encode())
+    filing = SimpleNamespace(cik=18230, accession_no="0000018230-26-000010", primary_document="cat-def14a.htm", attachments=[])
+    text, source = sec_core.get_proxy_text(filing)
+    assert source == "primary document" and "lead independent director" in text
+    assert fetched == ["https://www.sec.gov/Archives/edgar/data/18230/000001823026000010/cat-def14a.htm"]
 
 
-def _fails(ticker):
-    raise ValueError(f"no filing for {ticker}")
+def test_latest_filings_reads_full_history_only_when_recent_page_is_empty():
+    import sec_core
+    calls = []
+    def get_filings(form, trigger_full_load=True):
+        calls.append(trigger_full_load)
+        return [] if not trigger_full_load else ["old proxy"]
+    from types import SimpleNamespace
+    assert sec_core.latest_filings(SimpleNamespace(get_filings=get_filings), "DEF 14A") == ["old proxy"]
+    assert calls == [False, True]
 
 
-def test_isolated_lookup_returns_result_and_reports_failures():
-    import pytest
+def test_lookups_run_one_at_a_time():
+    import threading, time
     import main
-    assert main.isolated(lambda t: {"ticker": t, "rows": list(range(3))}, "CAT") == {"ticker": "CAT", "rows": [0, 1, 2]}
-    with pytest.raises(RuntimeError, match="no filing for JPM"):
-        main.isolated(_fails, "JPM")
-    # A child killed by the out-of-memory killer gets a plain explanation, and the server process survives it
-    with pytest.raises(RuntimeError, match="too large for the server's memory"):
-        main.isolated(_killed, "JPM")
+    running, most = [0], [0]
+    def slow(t):
+        running[0] += 1
+        most[0] = max(most[0], running[0])
+        time.sleep(0.05)
+        running[0] -= 1
+        return t
+    threads = [threading.Thread(target=main.one_at_a_time, args=(slow, t)) for t in ["CAT", "JPM", "GS"]]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert most[0] == 1
