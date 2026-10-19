@@ -207,6 +207,26 @@ export function StatementsPanel({ report }: { report: Report }) {
 export function GovernancePanel({ report }: { report: Report }) {
   const g = report.governance;
   const [open, setOpen] = useState<string | null>(null);
+
+  if (!g) {
+    return report.governanceError ? (
+      <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{report.governanceError}</p>
+    ) : (
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-muted">Reading the latest DEF 14A proxy statement. It&apos;s a long document, so this part can take a minute.</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <motion.div
+              key={i}
+              className="h-28 rounded-2xl border border-line bg-panel"
+              animate={{ opacity: [0.4, 0.9, 0.4] }}
+              transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.15 }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
   const sections = Object.entries(g.sections);
 
   if (!g.proxy_url) return <p className="text-muted">No DEF 14A proxy statement was found for this ticker.</p>;

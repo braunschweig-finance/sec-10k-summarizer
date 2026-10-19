@@ -409,8 +409,8 @@ def section_passage(text_body):
         passage = passage[:last_stop + 1]
     return passage
 
-def get_company_report(ticker_symbol):
-    """Everything the web page shows for one ticker, as plain JSON-ready data. Same steps as get_sec_data in app.py."""
+def get_financial_report(ticker_symbol):
+    """The 10-K half of the page: statements, ratios and their source line items. Same steps as get_sec_data in app.py."""
     company = Company(ticker_symbol)
 
     financials = company.get_financials()
@@ -420,9 +420,31 @@ def get_company_report(ticker_symbol):
     disp_cashflow, _ = statement_frames(financials.cash_flow_statement() if financials else None)
 
     ratios, inputs = compute_ratios(raw_income, raw_balance)
-
-    proxy_filings = company.get_filings(form="DEF 14A")
     tenk_filings = company.get_filings(form="10-K")
+
+    return {
+        "ticker": ticker_symbol,
+        "name": company.name,
+        "tenk_url": tenk_filings[0].url if tenk_filings else "",
+        "statements": {
+            "income": statement_json(clean_statement_df(disp_income)),
+            "balance": statement_json(clean_statement_df(disp_balance)),
+            "cashflow": statement_json(clean_statement_df(disp_cashflow)),
+        },
+        "ratios": ratios,
+        # Values in $ millions, with the filed line item and XBRL concept each one came from
+        "inputs": {
+            name: ({"value_m": hit["value"] / 1_000_000, "label": hit["label"], "concept": hit["concept"], "period": hit["period"]}
+                   if hit else None)
+            for name, hit in inputs.items()
+        },
+    }
+
+
+def get_governance_report(ticker_symbol):
+    """The DEF 14A half of the page: topic checks with quoted evidence and the four proxy passages."""
+    company = Company(ticker_symbol)
+    proxy_filings = company.get_filings(form="DEF 14A")
 
     governance = {"checks": {}, "sections": {}, "proxy_url": "", "proxy_date": "", "proxy_chars": 0, "proxy_source": ""}
     if proxy_filings:
@@ -451,22 +473,4 @@ def get_company_report(ticker_symbol):
                 section_passage(proxy_flat[found_pos : found_pos + 3000]) if found_pos != -1
                 else "No matching section heading was found in the proxy text."
             )
-
-    return {
-        "ticker": ticker_symbol,
-        "name": company.name,
-        "tenk_url": tenk_filings[0].url if tenk_filings else "",
-        "statements": {
-            "income": statement_json(clean_statement_df(disp_income)),
-            "balance": statement_json(clean_statement_df(disp_balance)),
-            "cashflow": statement_json(clean_statement_df(disp_cashflow)),
-        },
-        "ratios": ratios,
-        # Values in $ millions, with the filed line item and XBRL concept each one came from
-        "inputs": {
-            name: ({"value_m": hit["value"] / 1_000_000, "label": hit["label"], "concept": hit["concept"], "period": hit["period"]}
-                   if hit else None)
-            for name, hit in inputs.items()
-        },
-        "governance": governance,
-    }
+    return governance

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import type { Report } from "@/lib/types";
-import { API_URL, fetchReport } from "@/lib/api";
+import { API_URL, fetchGovernance, fetchReport } from "@/lib/api";
 import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 
@@ -24,6 +24,7 @@ export default function Terminal() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("ratios");
   const [slow, setSlow] = useState(false);
+  const current = useRef("");
 
   async function load(sym: string) {
     const t = sym.toUpperCase().trim();
@@ -33,9 +34,20 @@ export default function Terminal() {
     setError(null);
     // A free server that was asleep, plus a first read of the filing, can take a minute
     const slowTimer = setTimeout(() => setSlow(true), 5000);
+    current.current = t;
     try {
-      setReport(await fetchReport(t));
+      const r = await fetchReport(t);
+      setReport(r);
       setTab("ratios");
+      // The proxy statement loads after the ratios are already on screen
+      if (!r.governance) {
+        fetchGovernance(t)
+          .then((g) => current.current === t && setReport((prev) => (prev && prev.ticker === t ? { ...prev, governance: g } : prev)))
+          .catch((e) =>
+            current.current === t &&
+            setReport((prev) => (prev && prev.ticker === t ? { ...prev, governanceError: (e as Error).message } : prev))
+          );
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -183,7 +195,7 @@ export default function Terminal() {
                       10-K on EDGAR ↗
                     </a>
                   )}
-                  {report.governance.proxy_url && (
+                  {report.governance?.proxy_url && (
                     <a
                       href={report.governance.proxy_url}
                       target="_blank"
