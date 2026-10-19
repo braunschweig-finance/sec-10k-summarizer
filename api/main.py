@@ -4,7 +4,10 @@ Small web API for the redesigned site. Runs the same SEC logic as the Streamlit 
 Run locally:  uvicorn main:app --reload   (from the api/ folder)
 """
 import os
+import re
+import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from functools import lru_cache
 
@@ -142,13 +145,51 @@ def memo_prompt(r):
     """
 
 
+# Finished memos, keyed by ticker + the filings they were written from, so a repeat request skips Gemini.
+# A new 10-K or proxy gives a new key. In memory only, so a restart clears it.
+_memos = OrderedDict()
+_memos_lock = threading.Lock()
+_memo_key_locks = {}
+MEMO_CACHE_SIZE = 200
+
+
+def filing_id(url):
+    # The accession number (e.g. 0000018230-24-000012) names the filing; fall back to the URL itself
+    m = re.search(r"(\d{10}-\d{2}-\d{6})", url or "") or re.search(r"/(\d{18})/", url or "")
+    return m.group(1) if m else (url or "")
+
+
+def memo_key(report):
+    return (report["ticker"], filing_id(report.get("tenk_url")), filing_id(report["governance"].get("proxy_url")))
+
+
 @app.post("/api/memo")
 def memo(req: MemoRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise HTTPException(503, "GEMINI_API_KEY is not set on the API server.")
     report = full_report(req.ticker)
+    key = memo_key(report)
 
+    with _memos_lock:
+        key_lock = _memo_key_locks.setdefault(key, threading.Lock())
+    # One Gemini call per key: a second identical request waits here, then reads the cache
+    with key_lock:
+        with _memos_lock:
+            if key in _memos:
+                _memos.move_to_end(key)
+                print(f"[{key[0]}] memo: served from cache", flush=True)
+                return {**_memos[key], "cached": True}
+        result = write_memo(api_key, report)
+        with _memos_lock:
+            _memos[key] = result
+            while len(_memos) > MEMO_CACHE_SIZE:
+                old, _ = _memos.popitem(last=False)
+                _memo_key_locks.pop(old, None)
+    return {**result, "cached": False}
+
+
+def write_memo(api_key, report):
     from google import genai
     client = genai.Client(api_key=api_key)
     response, last_error = None, None
@@ -169,7 +210,7 @@ def memo(req: MemoRequest):
 
     if not response:
         if "429" in str(last_error) or "RESOURCE_EXHAUSTED" in str(last_error):
-            raise HTTPException(429, "Gemini rate limit reached (free-tier requests-per-minute cap). Wait a minute and try again.")
+            raise HTTPException(429, "The AI writer is busy (free-tier limit). Try again in a minute.")
         raise HTTPException(502, f"Failed to generate memo: {last_error}")
 
     usage = None
