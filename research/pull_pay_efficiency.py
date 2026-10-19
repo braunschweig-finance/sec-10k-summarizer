@@ -162,9 +162,14 @@ def pvp_from_filing(cik, accn):
             if fy is None:
                 continue
             who = members[0].split("=", 1)[1] if members else ""
+            if who and val == 0:
+                continue  # a former or future CEO shown as $0 for a year they weren't CEO
             key = (fy, who)
             if key in per_ceo and per_ceo[key] != val:
                 out[fy]["flags"].append(f"{col} differs for {who or 'CEO'}: {per_ceo[key]} vs {val}")
+                # Some filings repeat a figure rounded (e.g. 54.7M for 54,746,734); keep the exact one.
+                if len(str(int(abs(val))).rstrip("0")) > len(str(int(abs(per_ceo[key]))).rstrip("0")):
+                    per_ceo[key] = val
             per_ceo.setdefault(key, val)
         for fy in out:
             people = {who: v for (f, who), v in per_ceo.items() if f == fy}
