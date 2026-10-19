@@ -432,45 +432,11 @@ def section_passage(text_body):
         passage = passage[:last_stop + 1]
     return passage
 
-class _XbrlOnlyFiling:
-    """A filing that hands edgartools only the XBRL files, each downloaded on its own from the filing's index page.
-    edgartools otherwise reads the XBRL out of the complete submission file, which carries every exhibit and image:
-    for a large bank's 10-K that was more memory than the free server has."""
-
-    def __init__(self, filing):
-        self._filing = filing
-        self.form = filing.form
-        self.accession_no = filing.accession_no
-        self.attachments = filing.homepage.attachments
-
-    @property
-    def period_of_report(self):
-        return self._filing.period_of_report
-
-    def sgml(self):
-        return None
-
-
-def latest_tenk_financials(company):
-    """Financials of the latest original 10-K, or edgartools' own lookup (which also covers 20-F and 40-F filers)."""
-    from edgar.financials import Financials
-    from edgar.xbrl import XBRL
-    tenk = company.get_filings(form="10-K", amendments=False, trigger_full_load=False).latest()
-    if tenk is not None:
-        try:
-            xbrl = XBRL.from_filing(_XbrlOnlyFiling(tenk))
-            if xbrl is not None:
-                return Financials(xbrl)
-        except Exception as e:
-            print(f"XBRL-only read failed ({e!r}); using edgartools' full read", flush=True)
-    return company.get_financials()
-
-
 def get_financial_report(ticker_symbol):
     """The 10-K half of the page: statements, ratios and their source line items. Same steps as get_sec_data in app.py."""
     company = Company(ticker_symbol)
 
-    financials = latest_tenk_financials(company)
+    financials = company.get_financials()
     print(f"[{ticker_symbol}] 10-K financials loaded", flush=True)
     disp_income, raw_income = statement_frames(financials.income_statement() if financials else None)
     disp_balance, raw_balance = statement_frames(financials.balance_sheet() if financials else None)

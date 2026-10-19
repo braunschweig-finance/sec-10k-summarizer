@@ -228,17 +228,36 @@ def test_latest_filings_reads_full_history_only_when_recent_page_is_empty():
     assert calls == [False, True]
 
 
+def _slow(ticker):
+    import time
+    time.sleep(0.3)
+    return ticker
+
+
 def test_lookups_run_one_at_a_time():
     import threading, time
     import main
-    running, most = [0], [0]
-    def slow(t):
-        running[0] += 1
-        most[0] = max(most[0], running[0])
-        time.sleep(0.05)
-        running[0] -= 1
-        return t
-    threads = [threading.Thread(target=main.one_at_a_time, args=(slow, t)) for t in ["CAT", "JPM", "GS"]]
+    started = time.time()
+    threads = [threading.Thread(target=main.isolated, args=(_slow, t)) for t in ["CAT", "JPM", "GS"]]
     [t.start() for t in threads]
     [t.join() for t in threads]
-    assert most[0] == 1
+    assert time.time() - started >= 0.9
+
+def _killed(ticker):
+    import os, signal
+    os.kill(os.getpid(), signal.SIGKILL)
+
+
+def _fails(ticker):
+    raise ValueError(f"no filing for {ticker}")
+
+
+def test_isolated_lookup_returns_result_and_reports_failures():
+    import pytest
+    import main
+    assert main.isolated(lambda t: {"ticker": t, "rows": list(range(3))}, "CAT") == {"ticker": "CAT", "rows": [0, 1, 2]}
+    with pytest.raises(RuntimeError, match="no filing for JPM"):
+        main.isolated(_fails, "JPM")
+    # A child stopped by the out-of-memory killer gets a plain explanation, and the server process carries on
+    with pytest.raises(RuntimeError, match="too large for the free server's memory"):
+        main.isolated(_killed, "C")

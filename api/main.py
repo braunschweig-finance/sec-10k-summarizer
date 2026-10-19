@@ -3,8 +3,7 @@ Small web API for the redesigned site. Runs the same SEC logic as the Streamlit 
 
 Run locally:  uvicorn main:app --reload   (from the api/ folder)
 """
-import ctypes
-import gc
+import multiprocessing
 import os
 import re
 import threading
@@ -57,45 +56,73 @@ def _timed(step, ticker, fn):
     return result
 
 
-# One SEC lookup at a time, with memory handed back to the system after each. The free server has 512 MB and the
-# app itself takes about 230 MB, so two big filers read at once (or memory kept from the last one) could push it
-# over, and Render restarts it mid-request.
-_lookup_slot = threading.Semaphore(1)
-try:
-    _malloc_trim = ctypes.CDLL("libc.so.6").malloc_trim
-except (OSError, AttributeError):
-    _malloc_trim = None
+# Each SEC lookup runs in its own short-lived child process, one at a time. Reading a large filer takes a lot of
+# memory (Citigroup's 10-K alone needs about 300 MB on top of the app's 215 MB, and the free plan has 512 MB), and
+# Python keeps memory it has used. Before this, one big company in the server process meant Render restarted the
+# whole server mid-request. Now the child hands its memory back when it exits, and if a filing is too big, the
+# system stops only that child (it volunteers via oom_score_adj) and the page gets a plain explanation.
+_fork = multiprocessing.get_context("fork")
+_child_slot = threading.Semaphore(1)
+CHILD_LIMIT = 240  # seconds; a stuck child is stopped so it can't hold the slot forever
 
 
-def one_at_a_time(fn, ticker):
-    with _lookup_slot:
+def _child(fn, ticker, conn):
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("1000")
+    except OSError:
+        pass
+    try:
+        conn.send(("ok", fn(ticker)))
+    except Exception as e:
+        conn.send(("error", str(e) or repr(e)))
+    finally:
+        conn.close()
+
+
+def isolated(fn, ticker):
+    with _child_slot:
+        recv, send = _fork.Pipe(duplex=False)
+        proc = _fork.Process(target=_child, args=(fn, ticker, send))
+        proc.start()
+        send.close()
         try:
-            return fn(ticker)
+            if not recv.poll(CHILD_LIMIT):
+                proc.kill()
+                raise RuntimeError(f"the lookup was stopped after {CHILD_LIMIT} seconds")
+            status, payload = recv.recv()
+        except EOFError:
+            proc.join()
+            if proc.exitcode == -9:
+                raise RuntimeError("this filing is too large for the free server's memory (512 MB), so it can't be read here")
+            raise RuntimeError(f"the lookup stopped unexpectedly (exit code {proc.exitcode})")
         finally:
-            gc.collect()
-            if _malloc_trim:
-                _malloc_trim(0)
+            recv.close()
+        proc.join()
+    if status == "error":
+        raise RuntimeError(payload)
+    return payload
 
 
 # The 10-K and the proxy are separate requests, so ratios show up without waiting for the (slower) proxy
 @lru_cache(maxsize=64)
 def cached_financials(ticker):
-    return _timed("10-K", ticker, lambda t: one_at_a_time(sec_core.get_financial_report, t))
+    return _timed("10-K", ticker, lambda t: isolated(sec_core.get_financial_report, t))
 
 
 @lru_cache(maxsize=64)
 def cached_governance(ticker):
-    return _timed("DEF 14A", ticker, lambda t: one_at_a_time(sec_core.get_governance_report, t))
+    return _timed("DEF 14A", ticker, lambda t: isolated(sec_core.get_governance_report, t))
 
 
 @lru_cache(maxsize=64)
 def cached_pay_efficiency(ticker):
-    return _timed("Pay Efficiency", ticker, lambda t: one_at_a_time(sec_core.get_pay_efficiency, t))
+    return _timed("Pay Efficiency", ticker, lambda t: isolated(sec_core.get_pay_efficiency, t))
 
 
 @lru_cache(maxsize=64)
 def cached_trends(ticker):
-    return _timed("Trends", ticker, lambda t: one_at_a_time(sec_core.get_trends, t))
+    return _timed("Trends", ticker, lambda t: isolated(sec_core.get_trends, t))
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
