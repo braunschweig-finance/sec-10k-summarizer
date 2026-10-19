@@ -374,6 +374,16 @@ def build_word_memo(ticker_sym, company_nm, ratios_dict, gov_dict, memo_body):
     doc.save(file_buffer)
     return file_buffer.getvalue()
 
+def latest_filings(company, form):
+    """A company's filings of one form, newest first. SEC's first page of a filing history covers at least the last
+    year, which always holds the latest 10-K and proxy. Loading the full history instead costs big issuers a lot of
+    memory: JPMorgan files thousands of note prospectuses a year, and its full list took about 75 MB."""
+    found = company.get_filings(form=form, trigger_full_load=False)
+    if found is not None and len(found) > 0:
+        return found
+    return company.get_filings(form=form)
+
+
 def statement_frames(statement):
     """Returns (display_df, raw_df) for one statement, or (None, None) if the filing lacks it."""
     if statement is None:
@@ -429,7 +439,7 @@ def get_financial_report(ticker_symbol):
     disp_cashflow, _ = statement_frames(financials.cash_flow_statement() if financials else None)
 
     ratios, inputs = compute_ratios(raw_income, raw_balance)
-    tenk_filings = company.get_filings(form="10-K")
+    tenk_filings = latest_filings(company, "10-K")
 
     return {
         "ticker": ticker_symbol,
@@ -453,7 +463,7 @@ def get_financial_report(ticker_symbol):
 def get_governance_report(ticker_symbol):
     """The DEF 14A half of the page: topic checks with quoted evidence and the four proxy passages."""
     company = Company(ticker_symbol)
-    proxy_filings = company.get_filings(form="DEF 14A")
+    proxy_filings = latest_filings(company, "DEF 14A")
 
     governance = {"checks": {}, "sections": {}, "proxy_url": "", "proxy_date": "", "proxy_chars": 0, "proxy_source": ""}
     if proxy_filings:
@@ -609,7 +619,7 @@ def get_pay_efficiency(ticker_symbol):
     """CEO compensation actually paid / operating income for the latest year in the newest proxy's Pay Versus Performance table."""
     company = Company(ticker_symbol)
     cik = str(company.cik).zfill(10)
-    proxies = company.get_filings(form="DEF 14A")
+    proxies = latest_filings(company, "DEF 14A")
     if not proxies:
         return {"available": False, "reason": "No DEF 14A proxy statement on EDGAR for this company."}
     proxy = proxies[0]

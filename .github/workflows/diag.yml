@@ -5,14 +5,18 @@ on:
 jobs:
   repro:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        isolate: ['0', '1']
     steps:
       - uses: actions/checkout@v4
       - name: Run the API in a 512 MB container (like Render free) and make the page's calls
         run: |
-          docker run -d --name api --memory=512m --memory-swap=512m -p 8000:8000 -v $PWD/api:/app -w /app ${PY_ENV:-} python:3.13-slim \
+          docker run -d --name api --memory=512m --memory-swap=512m -p 8000:8000 -v $PWD/api:/app -w /app -e ISOLATE_LOOKUPS=${{ matrix.isolate }} -e ARROW_DEFAULT_MEMORY_POOL=system -e MALLOC_ARENA_MAX=2 python:3.13-slim \
             sh -c "pip install -q -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
           for i in $(seq 1 90); do curl -sf localhost:8000/health >/dev/null && break; sleep 2; done
           (while docker exec api cat /sys/fs/cgroup/memory.current 2>/dev/null; do sleep 0.3; done | sort -n | tail -1 | awk '{printf "highest memory during lookups: %d MiB\n", $1/1048576}' > peak.txt) &
           .github/diag/browser.sh CAT JPM AAPL MSFT BAC JPM || true
           docker stop api >/dev/null; sleep 1; cat peak.txt
-          docker logs api 2>&1 | grep -vi "pip\|notice" | tail -40
+          docker logs api 2>&1 | grep -vi "pip\|notice" | tail -80

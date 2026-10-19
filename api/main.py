@@ -3,6 +3,8 @@ Small web API for the redesigned site. Runs the same SEC logic as the Streamlit 
 
 Run locally:  uvicorn main:app --reload   (from the api/ folder)
 """
+import ctypes
+import gc
 import multiprocessing
 import os
 import re
@@ -62,7 +64,15 @@ def _timed(step, ticker, fn):
 # its memory back when it exits, so the server stays small between lookups.
 _fork = multiprocessing.get_context("fork")
 _child_slot = threading.Semaphore(1)
-CHILD_LIMIT = 240  # seconds; a stuck child is stopped so it can't hold the slot forever
+CHILD_LIMIT = 240
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+    def _trim():
+        _libc.malloc_trim(0)
+except OSError:
+    def _trim():
+        pass
+  # seconds; a stuck child is stopped so it can't hold the slot forever
 
 
 def _child(fn, ticker, conn):
@@ -75,6 +85,13 @@ def _child(fn, ticker, conn):
 
 
 def isolated(fn, ticker):
+    if os.environ.get("ISOLATE_LOOKUPS", "1") == "0":
+        with _child_slot:
+            try:
+                return fn(ticker)
+            finally:
+                gc.collect()
+                _trim()
     with _child_slot:
         recv, send = _fork.Pipe(duplex=False)
         proc = _fork.Process(target=_child, args=(fn, ticker, send))
