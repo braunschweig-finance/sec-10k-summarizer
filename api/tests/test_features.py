@@ -202,3 +202,23 @@ def test_companyfacts_keeps_only_needed_rows_and_reads_once(monkeypatch):
     for i in range(sec_core.FACTS_CACHE_SIZE + 1):
         sec_core.companyfacts(str(i))
     assert "0000018230" not in sec_core._facts and len(sec_core._facts) == sec_core.FACTS_CACHE_SIZE
+
+
+def _killed(ticker):
+    import os, signal
+    os.kill(os.getpid(), signal.SIGKILL)
+
+
+def _fails(ticker):
+    raise ValueError(f"no filing for {ticker}")
+
+
+def test_isolated_lookup_returns_result_and_reports_failures():
+    import pytest
+    import main
+    assert main.isolated(lambda t: {"ticker": t, "rows": list(range(3))}, "CAT") == {"ticker": "CAT", "rows": [0, 1, 2]}
+    with pytest.raises(RuntimeError, match="no filing for JPM"):
+        main.isolated(_fails, "JPM")
+    # A child killed by the out-of-memory killer gets a plain explanation, and the server process survives it
+    with pytest.raises(RuntimeError, match="too large for the server's memory"):
+        main.isolated(_killed, "JPM")

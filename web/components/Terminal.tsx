@@ -35,7 +35,7 @@ export default function Terminal() {
     setTicker(t);
     setLoading(true);
     setError(null);
-    // A free server that was asleep, plus a first read of the filing, can take a minute
+    // A company's first read of its filings from SEC can take up to a minute
     const slowTimer = setTimeout(() => setSlow(true), 5000);
     current.current = t;
     try {
@@ -166,7 +166,7 @@ export default function Terminal() {
                 className="max-w-xl text-sm text-muted"
                 role="status"
               >
-                Pulling {ticker}&apos;s 10-K and proxy from SEC EDGAR. If the data server was asleep, the first search takes about a minute.
+                Pulling {ticker}&apos;s 10-K and proxy from SEC EDGAR. A company's first search reads its filings from SEC and can take up to a minute; repeat searches are quick.
               </motion.p>
             )}
             {error && (
