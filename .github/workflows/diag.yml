@@ -3,6 +3,14 @@ on:
   push:
     branches: [fix/jpm-load-error]
 jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -q -r api/requirements.txt
+      - run: python .github/diag/compare.py C,JPM,CAT,AAPL,WFC,BRK-B,XOM,NVDA
   repro:
     runs-on: ubuntu-latest
     steps:
