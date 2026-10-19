@@ -19,6 +19,8 @@ Rules (decided 2026-10-19):
   - No us-gaap:OperatingIncomeLoss tag: pretax income is used and denominator says so.
   - One-year stock return (tsr_1y) is computed inside a single proxy, because each
     proxy restarts its $100 TSR base; raw TSR values from different proxies don't compare.
+    It needs the prior year in the same table, so a table's first year is never used
+    (tsr_1y_accn names the proxy it came from).
   - Rows are unique per ticker and fiscal year.
 """
 import csv
@@ -132,9 +134,11 @@ def pvp_from_filing(cik, accn):
     for name, end, members, val in facts:
         if name == "TotalShareholderRtnAmt" and not members:
             out.setdefault(end, {"tsr": val, "flags": []})
-    # TSR is the value of $100 invested at the start of the table, so the first
-    # year's return is tsr/100 - 1 and later years compare to the year before.
-    prev = 100.0
+    # TSR is the value of $100 invested at the start of the table, so a year's
+    # return compares it to the year before in the same table. The first year in
+    # a table is left blank: if earlier years weren't tagged, tsr/100 - 1 would be
+    # a multi-year return labeled as one year.
+    prev = None
     for fy in fy_ends:
         out[fy]["tsr_1y"] = out[fy]["tsr"] / prev - 1 if prev else None
         prev = out[fy]["tsr"]
@@ -206,7 +210,7 @@ def main():
     ticker_map.update(CIK_OVERRIDES)
 
     cols = ["ticker", "cik", "company", "sic", "financial_firm", "fiscal_year", "fy_end", "ceo_count",
-            "peo_total_comp", "peo_cap", "tsr", "tsr_1y", "pvp_accn",
+            "peo_total_comp", "peo_cap", "tsr", "tsr_1y", "tsr_1y_accn", "pvp_accn",
             "operating_income", "denominator", "op_income_tag", "op_income_accn",
             "net_income", "net_income_accn", "assets", "assets_accn",
             "liabilities", "equity", "pay_efficiency", "pay_efficiency_sct", "flags"]
@@ -224,11 +228,16 @@ def main():
                              zip(recent["form"], recent["accessionNumber"], recent["filingDate"])
                              if form == "DEF 14A" and filed >= "2023-01-01")
             pvp = {}
+            returns = {}  # year -> (one-year return, proxy it came from)
             for filed, accn in proxies:  # oldest first, so the original report wins
                 for fy, vals in pvp_from_filing(cik, accn).items():
                     year = fiscal_year(fy)
-                    if year in YEARS and year not in pvp:
+                    if year not in YEARS:
+                        continue
+                    if year not in pvp:
                         pvp[year] = dict(vals, pvp_accn=accn, fy_end=fy)
+                    if year not in returns and vals.get("tsr_1y") is not None:
+                        returns[year] = (vals["tsr_1y"], accn)
             gaap = json.loads(fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))["facts"].get("us-gaap", {})
         except Exception as e:
             log(f"{t}: FAILED {e}")
@@ -266,7 +275,8 @@ def main():
                 "financial_firm": str(sic).isdigit() and 6000 <= int(sic) <= 6799,
                 "fiscal_year": year, "fy_end": fy, "ceo_count": v.get("ceo_count"),
                 "peo_total_comp": v.get("peo_total_comp"), "peo_cap": cap, "tsr": v.get("tsr"),
-                "tsr_1y": v.get("tsr_1y"), "pvp_accn": v["pvp_accn"],
+                "tsr_1y": returns.get(year, (None, None))[0],
+                "tsr_1y_accn": returns.get(year, (None, None))[1], "pvp_accn": v["pvp_accn"],
                 "operating_income": op, "denominator": denominator, "op_income_tag": op_tag, "op_income_accn": op_accn,
                 "net_income": ni, "net_income_accn": ni_accn,
                 "assets": assets, "assets_accn": assets_accn,
