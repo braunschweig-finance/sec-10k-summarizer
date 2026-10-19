@@ -75,7 +75,7 @@ PVP = pvp_xml([
 @pytest.fixture
 def fake_sec(monkeypatch):
     proxy = SimpleNamespace(accession_no="0001308179-26-000358", url="https://www.sec.gov/proxy", filing_date="2026-04-30")
-    company = SimpleNamespace(cik=18230, name="Caterpillar Inc.", get_filings=lambda form: [proxy])
+    company = SimpleNamespace(cik=18230, name="Caterpillar Inc.", get_filings=lambda form, trigger_full_load=True: [proxy])
     monkeypatch.setattr(sec_core, "Company", lambda t: company)
     monkeypatch.setattr(sec_core, "companyfacts", lambda cik: GAAP)
     monkeypatch.setattr(sec_core, "instance_url", lambda cik, accn: "https://x/proxy_htm.xml")
