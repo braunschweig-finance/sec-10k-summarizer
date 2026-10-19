@@ -1,0 +1,21 @@
+name: Diagnose JPM
+on:
+  push:
+    branches: [fix/jpm-load-error]
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for p in health api/company/JPM api/company/JPM; do
+            curl -s -o out.txt -D h.txt -w "$p HTTP %{http_code} in %{time_total}s\n" --max-time 150 -H "Origin: https://sec-10k-summarizer.vercel.app" https://sec-terminal-api.onrender.com/$p || true
+            grep -i "access-control\|rndr\|render\|x-" h.txt || true; head -c 300 out.txt; echo
+          done
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q -r api/requirements.txt
+      - run: python .github/diag/measure.py JPM,CAT,BAC
