@@ -3,19 +3,25 @@ on:
   push:
     branches: [fix/jpm-load-error]
 jobs:
-  live:
+  repro:
     runs-on: ubuntu-latest
     steps:
-      - run: |
-          for p in health api/company/JPM api/company/JPM; do
-            curl -s -o out.txt -D h.txt -w "$p HTTP %{http_code} in %{time_total}s\n" --max-time 150 -H "Origin: https://sec-10k-summarizer.vercel.app" https://sec-terminal-api.onrender.com/$p || true
-            grep -i "access-control\|rndr\|render\|x-" h.txt || true; head -c 300 out.txt; echo
-          done
-  measure:
+      - uses: actions/checkout@v4
+      - name: Run the API in a 512 MB container (like Render free) and make the page's calls
+        run: |
+          docker run -d --name api --memory=512m --memory-swap=512m -p 8000:8000 -v $PWD/api:/app -w /app ${PY_ENV:-} python:3.13-slim \
+            sh -c "pip install -q -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
+          for i in $(seq 1 90); do curl -sf localhost:8000/health >/dev/null && break; sleep 2; done
+          .github/diag/browser.sh CAT JPM AAPL MSFT || true
+          docker logs api 2>&1 | grep -vi "pip\|notice" | tail -40
+  substeps:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.13" }
       - run: pip install -q -r api/requirements.txt
-      - run: python .github/diag/measure.py JPM,CAT,BAC
+      - run: |
+          python .github/diag/substeps.py JPM gov
+          python .github/diag/substeps.py JPM fin
+          python .github/diag/substeps.py CAT gov
