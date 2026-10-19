@@ -1,0 +1,27 @@
+# Pings the Render API every 10 minutes so the free instance doesn't spin down (it sleeps after 15 idle minutes).
+# Scheduled runs only start from the default branch. GitHub disables this after 60 days without repo
+# activity: re-enable it from Actions > Keep Render awake > Enable workflow.
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Ping /health
+        run: |
+          # A cold start takes about a minute, so allow a long wait and a few retries
+          status=000
+          for i in 1 2 3; do
+            status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 https://sec-terminal-api.onrender.com/health || true)
+            echo "Attempt $i: HTTP $status"
+            if [ "$status" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          # A single miss is fine; the next run tries again
+          echo "::warning::API did not answer 200 after 3 attempts (last status $status)"
