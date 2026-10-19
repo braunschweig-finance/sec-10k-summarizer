@@ -16,7 +16,10 @@ Rules (decided 2026-10-19):
   - Same fact tagged twice for one CEO and year: kept once.
   - A year's pay comes from the first proxy that reports it (the original).
   - 10-K values come from the first 10-K that reports that year (as originally filed).
-  - No us-gaap:OperatingIncomeLoss tag: pretax income is used and op_income_tag says so.
+  - No us-gaap:OperatingIncomeLoss tag: pretax income is used and denominator says so.
+  - One-year stock return (tsr_1y) is computed inside a single proxy, because each
+    proxy restarts its $100 TSR base; raw TSR values from different proxies don't compare.
+  - Rows are unique per ticker and fiscal year.
 """
 import csv
 import json
@@ -41,9 +44,13 @@ PRETAX_TAGS = [
     "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
     "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
 ]
-NI_TAGS = ["NetIncomeLoss"]
+NI_TAGS = ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]
 ASSET_TAGS = ["Assets"]
 LIAB_TAGS = ["Liabilities"]
+LIAB_EQ_TAGS = ["LiabilitiesAndStockholdersEquity"]
+TOTAL_EQUITY_TAGS = ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", "StockholdersEquity"]
+# SEC's ticker list can point an old ticker at a new holding company; pin the filer we want.
+CIK_OVERRIDES = {"XOM": ("0000034088", "EXXON MOBIL CORP")}
 EQUITY_TAGS = ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
 
 log_lines = []
@@ -125,6 +132,12 @@ def pvp_from_filing(cik, accn):
     for name, end, members, val in facts:
         if name == "TotalShareholderRtnAmt" and not members:
             out.setdefault(end, {"tsr": val, "flags": []})
+    # TSR is the value of $100 invested at the start of the table, so the first
+    # year's return is tsr/100 - 1 and later years compare to the year before.
+    prev = 100.0
+    for fy in fy_ends:
+        out[fy]["tsr_1y"] = out[fy]["tsr"] / prev - 1 if prev else None
+        prev = out[fy]["tsr"]
 
     def fy_for(end):
         # A CEO who left mid-year has an earlier end date; map it to the next fiscal year end.
@@ -190,12 +203,13 @@ def main():
         tickers = [t.strip().upper() for t in Path(sys.argv[1]).read_text().split() if t.strip()]
     ticker_map = {v["ticker"]: (str(v["cik_str"]).zfill(10), v["title"])
                   for v in json.loads(fetch("https://www.sec.gov/files/company_tickers.json")).values()}
+    ticker_map.update(CIK_OVERRIDES)
 
     cols = ["ticker", "cik", "company", "sic", "financial_firm", "fiscal_year", "fy_end", "ceo_count",
-            "peo_total_comp", "peo_cap", "tsr", "pvp_accn",
-            "operating_income", "op_income_tag", "op_income_accn",
+            "peo_total_comp", "peo_cap", "tsr", "tsr_1y", "pvp_accn",
+            "operating_income", "denominator", "op_income_tag", "op_income_accn",
             "net_income", "net_income_accn", "assets", "assets_accn",
-            "liabilities", "equity", "pay_efficiency", "flags"]
+            "liabilities", "equity", "pay_efficiency", "pay_efficiency_sct", "flags"]
     rows = []
     for t in tickers:
         if t not in ticker_map:
@@ -212,37 +226,52 @@ def main():
             pvp = {}
             for filed, accn in proxies:  # oldest first, so the original report wins
                 for fy, vals in pvp_from_filing(cik, accn).items():
-                    if fy not in pvp and fiscal_year(fy) in YEARS:
-                        pvp[fy] = dict(vals, pvp_accn=accn)
+                    year = fiscal_year(fy)
+                    if year in YEARS and year not in pvp:
+                        pvp[year] = dict(vals, pvp_accn=accn, fy_end=fy)
             gaap = json.loads(fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))["facts"].get("us-gaap", {})
         except Exception as e:
             log(f"{t}: FAILED {e}")
             continue
 
-        for fy in sorted(pvp):
-            v = pvp[fy]
+        if not proxies:
+            log(f"{t}: WARNING no DEF 14A since 2023 for CIK {cik}; check the ticker")
+        for year in sorted(pvp):
+            v = pvp[year]
+            fy = v["fy_end"]
+            flags = list(v["flags"])
+            denominator = "operating"
             op, op_tag, op_accn = tenk_value(gaap, OP_TAGS, fy, True)
             if op is None:
                 op, op_tag, op_accn = tenk_value(gaap, PRETAX_TAGS, fy, True)
-                if op is not None:
-                    op_tag = "PRETAX:" + op_tag
+                denominator = "pretax" if op is not None else ""
             ni, _, ni_accn = tenk_value(gaap, NI_TAGS, fy, True)
             assets, _, assets_accn = tenk_value(gaap, ASSET_TAGS, fy, False)
             liab, _, _ = tenk_value(gaap, LIAB_TAGS, fy, False)
             eq, _, _ = tenk_value(gaap, EQUITY_TAGS, fy, False)
+            if liab is None:
+                liab_eq, _, _ = tenk_value(gaap, LIAB_EQ_TAGS, fy, False)
+                total_eq, _, _ = tenk_value(gaap, TOTAL_EQUITY_TAGS, fy, False)
+                if liab_eq is not None and total_eq is not None:
+                    liab = liab_eq - total_eq
+                    flags.append("liabilities = total liabilities and equity minus total equity")
+            if op_accn and assets_accn and op_accn != assets_accn:
+                flags.append("operating income from a later 10-K (recast)")
             cap = v.get("peo_cap")
+            sct = v.get("peo_total_comp")
             eff = cap / op if cap is not None and op and op > 0 else None
+            eff_sct = sct / op if sct is not None and op and op > 0 else None
             rows.append({
                 "ticker": t, "cik": cik, "company": title, "sic": sic,
                 "financial_firm": str(sic).isdigit() and 6000 <= int(sic) <= 6799,
-                "fiscal_year": fiscal_year(fy), "fy_end": fy, "ceo_count": v.get("ceo_count"),
+                "fiscal_year": year, "fy_end": fy, "ceo_count": v.get("ceo_count"),
                 "peo_total_comp": v.get("peo_total_comp"), "peo_cap": cap, "tsr": v.get("tsr"),
-                "pvp_accn": v["pvp_accn"],
-                "operating_income": op, "op_income_tag": op_tag, "op_income_accn": op_accn,
+                "tsr_1y": v.get("tsr_1y"), "pvp_accn": v["pvp_accn"],
+                "operating_income": op, "denominator": denominator, "op_income_tag": op_tag, "op_income_accn": op_accn,
                 "net_income": ni, "net_income_accn": ni_accn,
                 "assets": assets, "assets_accn": assets_accn,
                 "liabilities": liab, "equity": eq,
-                "pay_efficiency": eff, "flags": "; ".join(v["flags"]),
+                "pay_efficiency": eff, "pay_efficiency_sct": eff_sct, "flags": "; ".join(flags),
             })
         log(f"{t}: {len(pvp)} fiscal years from {len(proxies)} proxies")
 
