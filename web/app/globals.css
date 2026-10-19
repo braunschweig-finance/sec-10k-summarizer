@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@source "../components";
+@source "../app";
+
+/* Layout concept: one dark "filing room" page. Aurora hero with the search, then a working terminal
+   (ratios, statements, governance, memo) and a scroll-drawn pipeline explaining where numbers come from. */
+@theme {
+  --color-ink: #0a0f1c;        /* page */
+  --color-panel: #111829;      /* raised surfaces */
+  --color-line: #222c44;       /* hairlines */
+  --color-paper: #e8ecf6;      /* main text */
+  --color-muted: #8b95b2;      /* secondary text */
+  --color-brass: #e7b65c;      /* accent: numbers, focus */
+  --color-teal: #4fd1c5;       /* "discussed" / positive */
+  --color-violet: #8b7cf6;     /* aurora */
+  --color-rose: #f47c7c;       /* "not found" / errors */
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+:root { color-scheme: dark; }
+html, body { background: var(--color-ink); color: var(--color-paper); }
+body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; }
+.tnum { font-variant-numeric: tabular-nums; }
+.gutter {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.eyebrow { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-muted); }
+
+/* Card that lights up under the cursor (position set from JS as --mx / --my) */
+.spotlight { position: relative; isolation: isolate; }
+.spotlight::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: -1; pointer-events: none;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, -40%), rgb(231 182 92 / 0.13), transparent 60%);
+  transition: opacity 0.3s; opacity: 0;
+}
+.spotlight:hover::before { opacity: 1; }
+
+/* Ticker tape of XBRL concepts */
+@keyframes tape { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.tape { animation: tape 60s linear infinite; }
+
+/* Gradient sweep on the headline accent word */
+@keyframes sheen { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
+.sheen {
+  background: linear-gradient(90deg, var(--color-brass), #f6dfa8, var(--color-teal), var(--color-brass));
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: sheen 8s linear infinite;
+}
+
+:focus-visible { outline: 2px solid var(--color-brass); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tape, .sheen { animation: none; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
