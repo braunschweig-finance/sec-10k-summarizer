@@ -23,6 +23,7 @@ export default function Terminal() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("ratios");
+  const [slow, setSlow] = useState(false);
 
   async function load(sym: string) {
     const t = sym.toUpperCase().trim();
@@ -30,12 +31,16 @@ export default function Terminal() {
     setTicker(t);
     setLoading(true);
     setError(null);
+    // A free server that was asleep, plus a first read of the filing, can take a minute
+    const slowTimer = setTimeout(() => setSlow(true), 5000);
     try {
       setReport(await fetchReport(t));
       setTab("ratios");
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      clearTimeout(slowTimer);
+      setSlow(false);
       setLoading(false);
     }
   }
@@ -125,6 +130,17 @@ export default function Terminal() {
           </motion.form>
 
           <AnimatePresence>
+            {loading && slow && (
+              <motion.p
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="max-w-xl text-sm text-muted"
+                role="status"
+              >
+                Pulling {ticker}&apos;s 10-K and proxy from SEC EDGAR. If the data server was asleep, the first search takes about a minute.
+              </motion.p>
+            )}
             {error && (
               <motion.p
                 initial={{ opacity: 0, height: 0 }}

@@ -7,7 +7,8 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, ""
 // fetch() throws a bare "Failed to fetch" when the API can't be reached (asleep, crashed, or blocking the site)
 async function callApi(path: string, init?: RequestInit) {
   try {
-    return await fetch(`${API_URL}${path}`, init);
+    // Longer than the API's own 90-second SEC time limit, so its clearer error arrives first
+    return await fetch(`${API_URL}${path}`, { ...init, signal: AbortSignal.timeout(150_000) });
   } catch {
     throw new Error(
       "Couldn't reach the data server. On the free plan it sleeps when nobody uses it and takes about a minute to wake up, so try again in a minute."
