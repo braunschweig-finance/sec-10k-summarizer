@@ -4,14 +4,21 @@ import { SAMPLE_CAT } from "./sample";
 // Set on Vercel to the Render address of the Python API. Empty means sample mode.
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
-// fetch() throws a bare "Failed to fetch" when the API can't be reached (asleep, crashed, or blocking the site)
+// fetch() throws a bare "Failed to fetch" when the API can't be reached or the server died mid-request
+// (a crash or restart sends no CORS headers, so the browser hides the real status). A quick /health check
+// tells "the server is down or starting" apart from "it's up, so this one request failed".
 async function callApi(path: string, init?: RequestInit) {
   try {
     // Longer than the API's own 90-second SEC time limit, so its clearer error arrives first
     return await fetch(`${API_URL}${path}`, { ...init, signal: AbortSignal.timeout(150_000) });
-  } catch {
+  } catch (e) {
+    if ((e as Error).name === "TimeoutError")
+      throw new Error("The data server didn't answer within 2.5 minutes. Try again; finished SEC lookups are kept, so a retry is usually faster.");
+    const up = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(8_000) }).then((r) => r.ok).catch(() => false);
     throw new Error(
-      "Couldn't reach the data server. On the free plan it sleeps when nobody uses it and takes about a minute to wake up, so try again in a minute."
+      up
+        ? "The data server dropped this request partway through, most likely because it restarted while reading the filing. It's back up now, so try again."
+        : "The data server isn't answering right now. It's either restarting or waking up, which takes about a minute, so try again shortly."
     );
   }
 }

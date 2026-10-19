@@ -3,8 +3,10 @@ Small web API for the redesigned site. Runs the same SEC logic as the Streamlit 
 
 Run locally:  uvicorn main:app --reload   (from the api/ folder)
 """
+import multiprocessing
 import os
 import re
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -13,13 +15,24 @@ from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 import export
 import sec_core
 
 app = FastAPI(title="SEC Financial & Corporate Governance Terminal API")
+
+# An unexpected error inside a route returns a plain JSON message. Added before the CORS middleware so it runs
+# inside it: otherwise the error reply has no CORS headers and the browser only sees "Failed to fetch".
+@app.middleware("http")
+async def unexpected_errors(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        print(f"[{request.url.path}] unexpected error: {e!r}", flush=True)
+        return JSONResponse({"detail": f"The data server hit an unexpected error: {e}"}, status_code=500)
+
 
 # The web site lives on a different address (Vercel), so the browser needs permission to call this API.
 # ALLOWED_ORIGINS is an optional comma-separated list, e.g. "https://sec-terminal.vercel.app". Left blank
@@ -44,25 +57,77 @@ def _timed(step, ticker, fn):
     return result
 
 
+# Each SEC lookup runs in its own short-lived child process, one at a time. Reading a large filer takes a lot of
+# memory (Citigroup's 10-K alone needs about 300 MB on top of the app's 215 MB, and the free plan has 512 MB), and
+# Python keeps memory it has used. Before this, one big company in the server process meant Render restarted the
+# whole server mid-request. Now the child hands its memory back when it exits, and if a filing is too big, the
+# system stops only that child (it volunteers via oom_score_adj) and the page gets a plain explanation.
+_fork = multiprocessing.get_context("fork")
+_child_slot = threading.Semaphore(1)
+CHILD_LIMIT = 120  # seconds; a stuck child is stopped so it can't hold the slot forever
+
+
+def _child(fn, ticker, conn):
+    # Another thread may have been mid-print when this process was copied, leaving the copy's stdout lock held
+    # forever. Fresh stdout/stderr objects have their own locks.
+    sys.stdout = open(1, "w", buffering=1, closefd=False)
+    sys.stderr = open(2, "w", buffering=1, closefd=False)
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("1000")
+    except OSError:
+        pass
+    try:
+        conn.send(("ok", fn(ticker)))
+    except Exception as e:
+        conn.send(("error", str(e) or repr(e)))
+    finally:
+        conn.close()
+
+
+def isolated(fn, ticker):
+    with _child_slot:
+        recv, send = _fork.Pipe(duplex=False)
+        proc = _fork.Process(target=_child, args=(fn, ticker, send))
+        proc.start()
+        send.close()
+        try:
+            if not recv.poll(CHILD_LIMIT):
+                proc.kill()
+                raise RuntimeError(f"the lookup was stopped after {CHILD_LIMIT} seconds")
+            status, payload = recv.recv()
+        except EOFError:
+            proc.join()
+            if proc.exitcode == -9:
+                raise RuntimeError("this filing is too large for the free server's memory (512 MB), so it can't be read here")
+            raise RuntimeError(f"the lookup stopped unexpectedly (exit code {proc.exitcode})")
+        finally:
+            recv.close()
+        proc.join()
+    if status == "error":
+        raise RuntimeError(payload)
+    return payload
+
+
 # The 10-K and the proxy are separate requests, so ratios show up without waiting for the (slower) proxy
 @lru_cache(maxsize=64)
 def cached_financials(ticker):
-    return _timed("10-K", ticker, sec_core.get_financial_report)
+    return _timed("10-K", ticker, lambda t: isolated(sec_core.get_financial_report, t))
 
 
 @lru_cache(maxsize=64)
 def cached_governance(ticker):
-    return _timed("DEF 14A", ticker, sec_core.get_governance_report)
+    return _timed("DEF 14A", ticker, lambda t: isolated(sec_core.get_governance_report, t))
 
 
 @lru_cache(maxsize=64)
 def cached_pay_efficiency(ticker):
-    return _timed("Pay Efficiency", ticker, sec_core.get_pay_efficiency)
+    return _timed("Pay Efficiency", ticker, lambda t: isolated(sec_core.get_pay_efficiency, t))
 
 
 @lru_cache(maxsize=64)
 def cached_trends(ticker):
-    return _timed("Trends", ticker, sec_core.get_trends)
+    return _timed("Trends", ticker, lambda t: isolated(sec_core.get_trends, t))
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
