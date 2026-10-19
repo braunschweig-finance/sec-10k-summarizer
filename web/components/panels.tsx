@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion, type Variants } from "motion/react";
-import type { Report, Statement } from "@/lib/types";
+import type { PayEfficiency, Report, Statement } from "@/lib/types";
 import { API_URL, downloadDocx, fetchMemo, saveBlob } from "@/lib/api";
 import { CountUp, onSpotlightMove } from "./fx";
 
@@ -69,6 +69,8 @@ export function RatiosPanel({ report }: { report: Report }) {
         })}
       </motion.div>
 
+      <PayEfficiencyCard pe={report.payEfficiency} error={report.payEfficiencyError} />
+
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-xl font-bold">Where every number comes from</h3>
@@ -104,6 +106,108 @@ export function RatiosPanel({ report }: { report: Report }) {
         </p>
       </div>
     </div>
+  );
+}
+
+const fmtPay = (m: number) => `$${m.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}M`;
+
+function SourceLine({ label, value, concept, href, linkText }: { label: string; value: string; concept: string; href: string; linkText: string }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-xl border border-line bg-ink/40 p-4">
+      <span className="eyebrow">{label}</span>
+      <span className="tnum font-mono text-lg text-paper">{value}</span>
+      <span className="font-mono text-xs text-muted">{concept}</span>
+      {href && (
+        <a href={href} target="_blank" rel="noreferrer" className="text-xs text-teal underline-offset-4 hover:underline">
+          {linkText} ↗
+        </a>
+      )}
+    </div>
+  );
+}
+
+// The project's own metric: how much of a year's operating income went to the CEO, by the SEC's "actually paid" measure
+function PayEfficiencyCard({ pe, error }: { pe: PayEfficiency | null; error?: string }) {
+  if (error) return <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">Pay Efficiency: {error}</p>;
+  if (!pe)
+    return (
+      <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
+        <span className="h-2 w-2 rounded-full bg-violet" /> Reading CEO pay from the proxy&apos;s Pay Versus Performance table…
+      </div>
+    );
+  if (!pe.available)
+    return (
+      <div className="rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
+        <span className="eyebrow mr-2">Pay Efficiency</span>
+        {pe.reason}
+      </div>
+    );
+  const fy = `FY${pe.fy_end.slice(0, 4)}`;
+  const pct = pe.value.endsWith("%") ? parseFloat(pe.value) : null;
+  return (
+    <motion.div
+      variants={rise}
+      initial="hidden"
+      animate="show"
+      onMouseMove={onSpotlightMove}
+      className="spotlight relative flex flex-col gap-5 overflow-hidden rounded-2xl border border-violet/40 bg-panel p-6"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-6">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="eyebrow">Pay Efficiency · {fy}</span>
+            <span className="rounded-full border border-violet/50 bg-violet/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet">
+              Original metric
+            </span>
+          </div>
+          <CountUp value={pe.value} className="font-display text-5xl font-bold text-violet" />
+          {pct !== null && (
+            <div className="h-1.5 w-56 overflow-hidden rounded-full bg-line">
+              {/* scaled so 5% fills the bar; most large companies sit well under it */}
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-violet to-brass"
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(100, (pct / 5) * 100)}%` }}
+                transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              />
+            </div>
+          )}
+        </div>
+        <p className="max-w-md text-sm leading-relaxed text-muted">
+          CEO compensation actually paid, as a share of {pe.denominator === "pretax" ? "pretax income" : "operating income"}. Lower means the
+          company keeps more of its operating profit for every dollar the CEO is paid.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <SourceLine
+          label={`CEO compensation actually paid${pe.ceo_count > 1 ? ` (${pe.ceo_count} CEOs: ${pe.ceos.join(" + ")})` : ""}`}
+          value={fmtPay(pe.ceo_pay_m)}
+          concept={pe.pay_concept}
+          href={pe.proxy_url}
+          linkText={`DEF 14A filed ${pe.proxy_date}, Pay Versus Performance table`}
+        />
+        <SourceLine
+          label={pe.denominator === "pretax" ? "Pretax income (no operating income tag)" : "Operating income"}
+          value={pe.op_income_m === null ? "Not reported" : `${fmtM(pe.op_income_m)}M`}
+          concept={pe.op_concept}
+          href={pe.tenk_url}
+          linkText={pe.tenk_accn ? `10-K, accession ${pe.tenk_accn}` : `${fy} 10-K`}
+        />
+      </div>
+
+      <div className="tnum font-mono text-xs text-muted">
+        {fmtPay(pe.ceo_pay_m)} ÷ {pe.op_income_m === null ? "?" : `${fmtM(pe.op_income_m)}M`} = {pe.value}
+        {pe.sct_total_m !== null && <> · Summary Compensation Table total: {fmtPay(pe.sct_total_m)}</>}
+      </div>
+      {pe.flags.length > 0 && (
+        <ul className="flex flex-col gap-1 text-xs text-brass">
+          {pe.flags.map((f) => (
+            <li key={f}>⚑ {f}</li>
+          ))}
+        </ul>
+      )}
+    </motion.div>
   );
 }
 

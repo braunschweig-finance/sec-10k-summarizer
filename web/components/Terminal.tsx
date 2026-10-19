@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import type { Report } from "@/lib/types";
-import { API_URL, fetchGovernance, fetchReport } from "@/lib/api";
+import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport } from "@/lib/api";
 import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 
@@ -46,6 +46,14 @@ export default function Terminal() {
           .catch((e) =>
             current.current === t &&
             setReport((prev) => (prev && prev.ticker === t ? { ...prev, governanceError: (e as Error).message } : prev))
+          );
+      }
+      if (!r.payEfficiency) {
+        fetchPayEfficiency(t)
+          .then((p) => current.current === t && setReport((prev) => (prev && prev.ticker === t ? { ...prev, payEfficiency: p } : prev)))
+          .catch((e) =>
+            current.current === t &&
+            setReport((prev) => (prev && prev.ticker === t ? { ...prev, payEfficiencyError: (e as Error).message } : prev))
           );
       }
     } catch (e) {
