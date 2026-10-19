@@ -1,4 +1,4 @@
-import type { Governance, Report } from "./types";
+import type { Governance, PayEfficiency, Report } from "./types";
 import { SAMPLE_CAT } from "./sample";
 
 // Set on Vercel to the Render address of the Python API. Empty means sample mode.
@@ -23,11 +23,17 @@ export async function fetchReport(ticker: string): Promise<Report> {
   }
   const res = await callApi(`/api/company/${encodeURIComponent(ticker)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
-  return { ...(await res.json()), governance: null };
+  return { ...(await res.json()), governance: null, payEfficiency: null };
 }
 
 export async function fetchGovernance(ticker: string): Promise<Governance> {
   const res = await callApi(`/api/governance/${encodeURIComponent(ticker)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
+  return res.json();
+}
+
+export async function fetchPayEfficiency(ticker: string): Promise<PayEfficiency> {
+  const res = await callApi(`/api/pay-efficiency/${encodeURIComponent(ticker)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
   return res.json();
 }

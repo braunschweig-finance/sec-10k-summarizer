@@ -54,6 +54,11 @@ def cached_governance(ticker):
     return _timed("DEF 14A", ticker, sec_core.get_governance_report)
 
 
+@lru_cache(maxsize=64)
+def cached_pay_efficiency(ticker):
+    return _timed("Pay Efficiency", ticker, sec_core.get_pay_efficiency)
+
+
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
 _pool = ThreadPoolExecutor(max_workers=4)
 SEC_TIMEOUT = int(os.environ.get("SEC_TIMEOUT_SECONDS", "90"))
@@ -105,6 +110,11 @@ def company(ticker: str):
 @app.get("/api/governance/{ticker}")
 def governance(ticker: str):
     return lookup(cached_governance, ticker)
+
+
+@app.get("/api/pay-efficiency/{ticker}")
+def pay_efficiency(ticker: str):
+    return lookup(cached_pay_efficiency, ticker)
 
 
 def full_report(ticker):

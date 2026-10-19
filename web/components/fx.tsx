@@ -110,6 +110,7 @@ export function TickerTape() {
     "DEF 14A · Clawback Policy",
     "DEF 14A · Anti-Hedging",
     "DEF 14A · Say-on-Pay",
+    "ecd:PeoActuallyPaidCompAmt",
   ];
   const row = [...tags, ...tags];
   return (

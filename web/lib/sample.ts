@@ -40,6 +40,27 @@ export const SAMPLE_CAT: Report = {
     proxy_chars: 282058,
     proxy_source: "the HTML documents in the filing",
   },
+  // Proxy accession 0001308179-26-000358: two CEOs in FY2025 (Umpleby to Apr 30, Creed from May 1),
+  // compensation actually paid $82,309,936 + $49,423,389 = $131,733,325; summary comp table $39,199,573.
+  payEfficiency: {
+    available: true,
+    value: "1.18%",
+    fy_end: "2025-12-31",
+    ceo_pay_m: 131.733325,
+    ceo_count: 2,
+    ceos: ["Mr. Umpleby", "Mr. Creed"],
+    sct_total_m: 39.199573,
+    pay_concept: "ecd:PeoActuallyPaidCompAmt",
+    proxy_url: "https://www.sec.gov/Archives/edgar/data/18230/000130817926000358/",
+    proxy_date: "2026-04-30",
+    proxy_accn: "0001308179-26-000358",
+    op_income_m: 11151,
+    op_concept: "us-gaap:OperatingIncomeLoss",
+    denominator: "operating",
+    tenk_accn: "",
+    tenk_url: CAT_EDGAR,
+    flags: ["2 people served as CEO this year; their pay is added together."],
+  },
   sample: {
     note: "Sample data: Caterpillar FY2025 10-K and 2026 proxy, as read by the live app on Oct 17–18, 2026.",
     revenueHistory: [

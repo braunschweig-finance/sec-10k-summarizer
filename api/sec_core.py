@@ -6,7 +6,12 @@ segment-row fix from PR #3, so the new site and the Streamlit site compute the s
 app.py can't be imported directly because it runs the Streamlit page as soon as it loads.
 """
 import io
+import json
 import re
+import xml.etree.ElementTree as ET
+from datetime import date
+
+import httpx
 import pandas as pd
 from docx import Document
 from edgar import Company, set_identity
@@ -474,3 +479,183 @@ def get_governance_report(ticker_symbol):
                 else "No matching section heading was found in the proxy text."
             )
     return governance
+
+
+# ---------- Pay Efficiency (ported from finance-research/scripts/pull_pay_efficiency.py) ----------
+# CEO pay isn't in SEC's companyfacts summary, so it's read from the proxy's own XBRL file
+# (Pay Versus Performance table, ecd: tags). Operating income comes from companyfacts for the same fiscal year.
+
+XBRLI = "{http://www.xbrl.org/2003/instance}"
+XBRLDI = "{http://xbrl.org/2006/xbrldi}"
+PVP_TAGS = {"PeoTotalCompAmt": "peo_total_comp", "PeoActuallyPaidCompAmt": "peo_cap"}
+OP_TAGS = ["OperatingIncomeLoss"]
+PRETAX_TAGS = [
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+]
+
+
+def sec_fetch(url):
+    r = httpx.get(url, headers={"User-Agent": SEC_IDENTITY}, timeout=60, follow_redirects=True)
+    r.raise_for_status()
+    return r.content
+
+
+def days_apart(a, b):
+    return abs((date.fromisoformat(a) - date.fromisoformat(b)).days)
+
+
+def instance_url(cik, accn):
+    folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accn.replace('-', '')}"
+    names = [i["name"] for i in json.loads(sec_fetch(folder + "/index.json"))["directory"]["item"]]
+    # SEC extracts inline XBRL into a file ending in _htm.xml
+    for n in names:
+        if n.endswith("_htm.xml"):
+            return f"{folder}/{n}"
+    for n in names:
+        if n.endswith(".xml") and "FilingSummary" not in n and not n.endswith(("_cal.xml", "_def.xml", "_lab.xml", "_pre.xml")):
+            return f"{folder}/{n}"
+    return None
+
+
+def pvp_from_xml(xml_bytes):
+    """Pay Versus Performance numbers by fiscal year end: {fy_end: {"peo_cap", "peo_total_comp", "ceo_count", "ceos", "flags"}}."""
+    root = ET.fromstring(xml_bytes)
+    contexts = {}
+    for ctx in root.iter(XBRLI + "context"):
+        p = ctx.find(XBRLI + "period")
+        end = p.findtext(XBRLI + "endDate") or p.findtext(XBRLI + "instant")
+        members = tuple(sorted(f"{m.get('dimension')}={m.text}" for m in ctx.iter(XBRLDI + "explicitMember")))
+        contexts[ctx.get("id")] = (end, members)
+
+    facts = []
+    for el in root:
+        if "}" not in el.tag or "/ecd/" not in el.tag.split("}")[0]:
+            continue
+        end, members = contexts.get(el.get("contextRef"), (None, ()))
+        try:
+            val = float((el.text or "").strip())
+        except ValueError:
+            continue
+        facts.append((el.tag.split("}")[1], end, members, val))
+
+    # Fiscal year ends = end dates of the company's own TSR (no dimension)
+    fy_ends = sorted({end for name, end, members, val in facts if name == "TotalShareholderRtnAmt" and not members})
+    out = {fy: {"flags": []} for fy in fy_ends}
+
+    def fy_for(end):
+        # A CEO who left mid-year has an earlier end date; map it to the next fiscal year end
+        for fy in fy_ends:
+            if date.fromisoformat(fy) >= date.fromisoformat(end) or days_apart(fy, end) <= 10:
+                return fy
+        return None
+
+    for tag, col in PVP_TAGS.items():
+        per_ceo = {}  # (fy, individual) -> value
+        for name, end, members, val in facts:
+            if name != tag or end is None:
+                continue
+            if [m for m in members if not m.startswith("ecd:IndividualAxis=")]:
+                continue  # adjustment breakdowns, not the headline number
+            fy = fy_for(end)
+            if fy is None:
+                continue
+            who = members[0].split("=", 1)[1] if members else ""
+            if who and val == 0:
+                continue  # a former or future CEO shown as $0 for a year they weren't CEO
+            key = (fy, who)
+            if key in per_ceo and per_ceo[key] != val:
+                # Some filings repeat a figure rounded (e.g. 54.7M for 54,746,734); keep the exact one
+                if len(str(int(abs(val))).rstrip("0")) > len(str(int(abs(per_ceo[key]))).rstrip("0")):
+                    per_ceo[key] = val
+            per_ceo.setdefault(key, val)
+        for fy in out:
+            people = {who: v for (f, who), v in per_ceo.items() if f == fy}
+            if "" in people and len(people) != 1:
+                out[fy]["flags"].append(f"{tag}: filing tags both a total and per-CEO amounts; used the total")
+                people = {"": people[""]}
+            if people:
+                out[fy][col] = sum(people.values())
+                if col == "peo_cap":
+                    out[fy]["ceo_count"] = len(people)
+                    out[fy]["ceos"] = [ceo_name(who) for who in people if who]
+    return out
+
+
+def ceo_name(member):
+    """"CAT:Mr.UmplebyMember" -> "Mr. Umpleby" (the filer's own label for the CEO)."""
+    name = re.sub(r"Member$", "", member.split(":")[-1])
+    name = re.sub(r"(?<=[a-z.])(?=[A-Z])", " ", name)
+    return name.strip()
+
+
+def tenk_value(gaap, tags, fy_end):
+    """First-filed 10-K value of a full-year income statement item for fy_end: (value, tag, accession)."""
+    for tag in tags:
+        hits = [r for r in gaap.get(tag, {}).get("units", {}).get("USD", [])
+                if r.get("form") == "10-K" and days_apart(r["end"], fy_end) <= 10
+                and "start" in r and 340 <= days_apart(r["start"], r["end"]) <= 390]
+        if hits:
+            first = min(hits, key=lambda r: r["filed"])
+            return first["val"], tag, first["accn"]
+    return None, None, None
+
+
+def get_pay_efficiency(ticker_symbol):
+    """CEO compensation actually paid / operating income for the latest year in the newest proxy's Pay Versus Performance table."""
+    company = Company(ticker_symbol)
+    cik = str(company.cik).zfill(10)
+    proxies = company.get_filings(form="DEF 14A")
+    if not proxies:
+        return {"available": False, "reason": "No DEF 14A proxy statement on EDGAR for this company."}
+    proxy = proxies[0]
+    accn = proxy.accession_no
+    url = instance_url(cik, accn)
+    if not url:
+        return {"available": False, "reason": "The latest proxy has no XBRL data, so the Pay Versus Performance table can't be read."}
+    pvp = {fy: v for fy, v in pvp_from_xml(sec_fetch(url)).items() if v.get("peo_cap") is not None}
+    print(f"[{ticker_symbol}] Pay Versus Performance read ({len(pvp)} years)", flush=True)
+    if not pvp:
+        return {"available": False, "reason": "The latest proxy doesn't tag CEO compensation actually paid (ecd:PeoActuallyPaidCompAmt)."}
+    fy_end = max(pvp)
+    v = pvp[fy_end]
+
+    gaap = json.loads(sec_fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))["facts"].get("us-gaap", {})
+    denominator = "operating"
+    op, op_tag, op_accn = tenk_value(gaap, OP_TAGS, fy_end)
+    if op is None:
+        op, op_tag, op_accn = tenk_value(gaap, PRETAX_TAGS, fy_end)
+        denominator = "pretax" if op is not None else ""
+    flags = list(v["flags"])
+    if denominator == "pretax":
+        flags.append("No us-gaap:OperatingIncomeLoss tag in the 10-K, so pretax income is used instead.")
+    if v.get("ceo_count", 1) > 1:
+        flags.append(f"{v['ceo_count']} people served as CEO this year; their pay is added together.")
+
+    cap = v["peo_cap"]
+    if op is None:
+        value = "N/A"
+        flags.append("No operating or pretax income found in a 10-K for this fiscal year.")
+    elif op <= 0:
+        value = "N/M (operating loss)"
+    else:
+        value = f"{cap / op * 100:.2f}%"
+    return {
+        "available": True,
+        "value": value,
+        "fy_end": fy_end,
+        "ceo_pay_m": cap / 1_000_000,
+        "ceo_count": v.get("ceo_count", 1),
+        "ceos": v.get("ceos", []),
+        "sct_total_m": v["peo_total_comp"] / 1_000_000 if v.get("peo_total_comp") is not None else None,
+        "pay_concept": "ecd:PeoActuallyPaidCompAmt",
+        "proxy_url": proxy.url,
+        "proxy_date": str(proxy.filing_date),
+        "proxy_accn": accn,
+        "op_income_m": op / 1_000_000 if op is not None else None,
+        "op_concept": f"us-gaap:{op_tag}" if op_tag else "",
+        "denominator": denominator,
+        "tenk_accn": op_accn or "",
+        "tenk_url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{op_accn.replace('-', '')}/" if op_accn else "",
+        "flags": flags,
+    }
