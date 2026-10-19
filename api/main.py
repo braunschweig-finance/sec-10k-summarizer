@@ -5,6 +5,7 @@ Run locally:  uvicorn main:app --reload   (from the api/ folder)
 """
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
@@ -33,7 +34,16 @@ app.add_middleware(
 @lru_cache(maxsize=64)
 def cached_report(ticker):
     # Errors raise and are not cached, so a temporary SEC outage doesn't stick
-    return sec_core.get_company_report(ticker)
+    started = time.time()
+    print(f"[{ticker}] fetching from SEC EDGAR", flush=True)
+    report = sec_core.get_company_report(ticker)
+    print(f"[{ticker}] done in {time.time() - started:.1f}s", flush=True)
+    return report
+
+
+# SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
+_pool = ThreadPoolExecutor(max_workers=4)
+SEC_TIMEOUT = int(os.environ.get("SEC_TIMEOUT_SECONDS", "90"))
 
 
 @app.get("/health")
@@ -47,8 +57,12 @@ def company(ticker: str):
     if not ticker.replace(".", "").replace("-", "").isalnum() or len(ticker) > 10:
         raise HTTPException(400, "That doesn't look like a ticker symbol.")
     try:
-        return cached_report(ticker)
+        return _pool.submit(cached_report, ticker).result(timeout=SEC_TIMEOUT)
+    except FutureTimeout:
+        print(f"[{ticker}] timed out after {SEC_TIMEOUT}s", flush=True)
+        raise HTTPException(504, f"SEC EDGAR didn't answer within {SEC_TIMEOUT} seconds for {ticker}. Try again in a minute.")
     except Exception as e:
+        print(f"[{ticker}] failed: {e!r}", flush=True)
         raise HTTPException(502, f"Couldn't fetch SEC data for {ticker}: {e}")
 
 

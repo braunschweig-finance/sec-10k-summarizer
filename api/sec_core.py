@@ -413,6 +413,7 @@ def get_company_report(ticker_symbol):
     company = Company(ticker_symbol)
 
     financials = company.get_financials()
+    print(f"[{ticker_symbol}] 10-K financials loaded", flush=True)
     disp_income, raw_income = statement_frames(financials.income_statement() if financials else None)
     disp_balance, raw_balance = statement_frames(financials.balance_sheet() if financials else None)
     disp_cashflow, _ = statement_frames(financials.cash_flow_statement() if financials else None)
@@ -426,6 +427,7 @@ def get_company_report(ticker_symbol):
     if proxy_filings:
         latest_proxy = proxy_filings[0]
         proxy_raw, proxy_source = get_proxy_text(latest_proxy)
+        print(f"[{ticker_symbol}] DEF 14A read ({len(proxy_raw):,} characters)", flush=True)
         proxy_flat = clean_governance_text(proxy_raw)
         governance.update(proxy_url=latest_proxy.url, proxy_date=str(latest_proxy.filing_date),
                           proxy_chars=len(proxy_raw), proxy_source=proxy_source)
