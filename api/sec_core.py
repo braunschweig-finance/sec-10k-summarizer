@@ -10,7 +10,8 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from datetime import date
-from functools import lru_cache
+import threading
+from collections import OrderedDict
 
 import httpx
 import pandas as pd
@@ -686,11 +687,46 @@ def filing_folder(cik, accn):
     return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accn.replace('-', '')}/" if accn else ""
 
 
-@lru_cache(maxsize=1)
+FACT_KEYS = ("val", "start", "end", "accn", "filed", "form")
+_facts = OrderedDict()
+_facts_lock = threading.Lock()
+FACTS_CACHE_SIZE = 16
+
+
+def used_tags():
+    return set(OP_TAGS + PRETAX_TAGS + ["InterestIncomeExpenseNet", "NoninterestIncome"]
+               + [t for tags in TREND_TAGS.values() for t in tags])
+
+
+def slim_facts(us_gaap):
+    """Keeps only the full-year 10-K rows of the tags this app reads, in the same shape as companyfacts."""
+    keep = used_tags()
+    out = {}
+    for tag, body in us_gaap.items():
+        if tag not in keep:
+            continue
+        rows = [{k: r.get(k) for k in FACT_KEYS} for r in body.get("units", {}).get("USD", [])
+                if r.get("form") == "10-K" and "start" in r and 340 <= days_apart(r["start"], r["end"]) <= 390]
+        if rows:
+            out[tag] = {"units": {"USD": rows}}
+    return out
+
+
 def companyfacts(cik):
-    """us-gaap facts from SEC's companyfacts file. Only the last company is kept (the file can be tens of MB and
-    the free server has 512 MB), which is enough for the trends lookup that follows the Pay Efficiency one."""
-    return json.loads(sec_fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))["facts"].get("us-gaap", {})
+    """The us-gaap facts this app uses from SEC's companyfacts file. The full file can be tens of MB, so it is
+    read one company at a time (the free server has 512 MB) and only the few tags needed are kept, which makes
+    the cache small enough to hold several companies and lets the trends lookup reuse the Pay Efficiency read."""
+    with _facts_lock:
+        if cik in _facts:
+            _facts.move_to_end(cik)
+            return _facts[cik]
+        raw = sec_fetch(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json")
+        slim = slim_facts(json.loads(raw)["facts"].get("us-gaap", {}))
+        del raw
+        _facts[cik] = slim
+        while len(_facts) > FACTS_CACHE_SIZE:
+            _facts.popitem(last=False)
+        return slim
 
 
 # ---------- Multi-year trends (same companyfacts file, each year's own 10-K) ----------
