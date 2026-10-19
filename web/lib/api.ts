@@ -1,4 +1,4 @@
-import type { Report } from "./types";
+import type { Governance, Report } from "./types";
 import { SAMPLE_CAT } from "./sample";
 
 // Set on Vercel to the Render address of the Python API. Empty means sample mode.
@@ -22,6 +22,12 @@ export async function fetchReport(ticker: string): Promise<Report> {
     throw new Error(`Live lookups start once the API is online. For now the preview has Caterpillar (CAT) only.`);
   }
   const res = await callApi(`/api/company/${encodeURIComponent(ticker)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
+  return { ...(await res.json()), governance: null };
+}
+
+export async function fetchGovernance(ticker: string): Promise<Governance> {
+  const res = await callApi(`/api/governance/${encodeURIComponent(ticker)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Request failed (${res.status})`);
   return res.json();
 }

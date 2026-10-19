@@ -31,19 +31,45 @@ app.add_middleware(
 )
 
 
-@lru_cache(maxsize=64)
-def cached_report(ticker):
+def _timed(step, ticker, fn):
     # Errors raise and are not cached, so a temporary SEC outage doesn't stick
     started = time.time()
-    print(f"[{ticker}] fetching from SEC EDGAR", flush=True)
-    report = sec_core.get_company_report(ticker)
-    print(f"[{ticker}] done in {time.time() - started:.1f}s", flush=True)
-    return report
+    print(f"[{ticker}] {step}: fetching from SEC EDGAR", flush=True)
+    result = fn(ticker)
+    print(f"[{ticker}] {step}: done in {time.time() - started:.1f}s", flush=True)
+    return result
+
+
+# The 10-K and the proxy are separate requests, so ratios show up without waiting for the (slower) proxy
+@lru_cache(maxsize=64)
+def cached_financials(ticker):
+    return _timed("10-K", ticker, sec_core.get_financial_report)
+
+
+@lru_cache(maxsize=64)
+def cached_governance(ticker):
+    return _timed("DEF 14A", ticker, sec_core.get_governance_report)
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
 _pool = ThreadPoolExecutor(max_workers=4)
 SEC_TIMEOUT = int(os.environ.get("SEC_TIMEOUT_SECONDS", "90"))
+
+
+def lookup(fn, ticker):
+    """Runs one cached SEC lookup with the time limit. A lookup that times out keeps running in the
+    background and lands in the cache, so trying again a minute later is fast."""
+    ticker = ticker.upper().strip()
+    if not ticker.replace(".", "").replace("-", "").isalnum() or len(ticker) > 10:
+        raise HTTPException(400, "That doesn't look like a ticker symbol.")
+    try:
+        return _pool.submit(fn, ticker).result(timeout=SEC_TIMEOUT)
+    except FutureTimeout:
+        print(f"[{ticker}] timed out after {SEC_TIMEOUT}s", flush=True)
+        raise HTTPException(504, f"SEC EDGAR took longer than {SEC_TIMEOUT} seconds for {ticker}. It keeps working in the background, so try again in a minute.")
+    except Exception as e:
+        print(f"[{ticker}] failed: {e!r}", flush=True)
+        raise HTTPException(502, f"Couldn't fetch SEC data for {ticker}: {e}")
 
 
 @app.get("/health")
@@ -70,17 +96,16 @@ def sec_check():
 
 @app.get("/api/company/{ticker}")
 def company(ticker: str):
-    ticker = ticker.upper().strip()
-    if not ticker.replace(".", "").replace("-", "").isalnum() or len(ticker) > 10:
-        raise HTTPException(400, "That doesn't look like a ticker symbol.")
-    try:
-        return _pool.submit(cached_report, ticker).result(timeout=SEC_TIMEOUT)
-    except FutureTimeout:
-        print(f"[{ticker}] timed out after {SEC_TIMEOUT}s", flush=True)
-        raise HTTPException(504, f"SEC EDGAR didn't answer within {SEC_TIMEOUT} seconds for {ticker}. Try again in a minute.")
-    except Exception as e:
-        print(f"[{ticker}] failed: {e!r}", flush=True)
-        raise HTTPException(502, f"Couldn't fetch SEC data for {ticker}: {e}")
+    return lookup(cached_financials, ticker)
+
+
+@app.get("/api/governance/{ticker}")
+def governance(ticker: str):
+    return lookup(cached_governance, ticker)
+
+
+def full_report(ticker):
+    return {**company(ticker), "governance": governance(ticker)}
 
 
 class MemoRequest(BaseModel):
@@ -122,7 +147,7 @@ def memo(req: MemoRequest):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise HTTPException(503, "GEMINI_API_KEY is not set on the API server.")
-    report = company(req.ticker)
+    report = full_report(req.ticker)
 
     from google import genai
     client = genai.Client(api_key=api_key)
@@ -160,7 +185,7 @@ class DocxRequest(BaseModel):
 
 @app.post("/api/memo.docx")
 def memo_docx(req: DocxRequest):
-    report = company(req.ticker)
+    report = full_report(req.ticker)
     data = sec_core.build_word_memo(report["ticker"], report["name"], report["ratios"],
                                     report["governance"]["sections"], req.memo)
     return Response(
