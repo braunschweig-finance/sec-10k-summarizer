@@ -184,3 +184,21 @@ def test_api_routes(fake_sec, monkeypatch):
     p = client.get("/api/export/CAT.pdf")
     assert p.status_code == 200 and p.content[:5] == b"%PDF-"
     assert client.get("/api/export/BAD!!.pdf").status_code == 400
+
+
+def test_companyfacts_keeps_only_needed_rows_and_reads_once(monkeypatch):
+    import json
+    calls = []
+    big = {**GAAP, "AccountsPayableCurrent": {"units": {"USD": [fact(1e9, "2024-01-01", "2024-12-31", "x", "2025-02-01")]}}}
+    monkeypatch.setattr(sec_core, "sec_fetch", lambda url: calls.append(url) or json.dumps({"facts": {"us-gaap": big}}).encode())
+    sec_core._facts.clear()
+    first = sec_core.companyfacts("0000018230")
+    assert sec_core.companyfacts("0000018230") is first and len(calls) == 1   # trends reuse the Pay Efficiency read
+    assert "AccountsPayableCurrent" not in first                             # tags the app never reads are dropped
+    rows = first["OperatingIncomeLoss"]["units"]["USD"]
+    assert all(r["form"] == "10-K" and sec_core.days_apart(r["start"], r["end"]) >= 340 for r in rows)  # no quarters or 10-Qs
+    # Same answers from the slim copy as from the full file
+    assert sec_core.tenk_value(first, ["OperatingIncomeLoss"], "2024-12-31") == sec_core.tenk_value(GAAP, ["OperatingIncomeLoss"], "2024-12-31")
+    for i in range(sec_core.FACTS_CACHE_SIZE + 1):
+        sec_core.companyfacts(str(i))
+    assert "0000018230" not in sec_core._facts and len(sec_core._facts) == sec_core.FACTS_CACHE_SIZE
