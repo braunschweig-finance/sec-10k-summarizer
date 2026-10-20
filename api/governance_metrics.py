@@ -94,12 +94,19 @@ INDEP_OF = re.compile(
 INDEP_SLASH = re.compile(r"(?<![\d/])(\d{1,2})\s?/\s?(\d{1,2})(?![\d/])\s+(?:of\s+)?(?:(?:our\s+)?(?:director\s+)?(?:nominees|directors)\s+(?:are\s+)?)?independent",
                          re.IGNORECASE)
 INDEP_BARE = re.compile(NUM + r"\s+of\s+" + NUM + r"\s+(?:director\s+nominees|directors|nominees)\s+(?:are\s+)?independent", re.IGNORECASE)
+NAME = r"((?:(?:Mr|Ms|Mrs|Dr)\.\s+)?[^.;,()]{3,60}?)"
+EXCEPT = r"(?:other\s+than|except(?:\s+for)?|with\s+the\s+exception\s+of)"
+# "All of our current Directors (other than Dr. Albert Bourla) are independent"
 INDEP_ALL_BUT = re.compile(
-    r"all\s+(?:of\s+)?(?:(?:our|the|\w+'s)\s+)?(?:director\s+nominees|directors|nominees)[^.;]{0,30}?(?:other\s+than|except(?:\s+for)?)\s+([^.;]{3,80}?),?\s+"
-    r"(?:are|is|have\s+been\s+determined\s+to\s+be)\s+independent", re.IGNORECASE)
-# "All director nominees are independent, except Mr. Decker"
+    r"all\s+(?:of\s+)?(?:(?:our|the|\w+'s)\s+)?(?:current\s+)?(?:director\s+nominees|directors|nominees)[^.;]{0,30}?\(?" + EXCEPT + r"\s+" + NAME +
+    r"\)?,?\s+(?:are|is|have\s+been\s+determined\s+to\s+be)\s+independent", re.IGNORECASE)
+# "All director nominees are independent, except Mr. Decker" / "..., with the exception of our CEO"
 INDEP_ALL_EXCEPT = re.compile(
-    r"all\s+(?:of\s+)?(?:(?:our|the)\s+)?(?:director\s+nominees|directors|nominees)\s+are\s+independent,?\s+(?:other\s+than|except(?:\s+for)?)\s+((?:(?:Mr|Ms|Mrs|Dr)\.\s+)?[^.;,]{3,60}?)(?=[.;,)]|$)",
+    r"all\s+(?:of\s+)?(?:(?:our|the)\s+)?(?:director\s+nominees|directors|nominees)\s+are\s+independent,?\s+" + EXCEPT + r"\s+" + NAME + r"(?=[.;,)]|$)",
+    re.IGNORECASE)
+# "With the exception of Mr. Decker, our Chair, President and CEO, each director was independent"
+INDEP_EXCEPT_FIRST = re.compile(
+    r"with\s+the\s+exception\s+of\s+" + NAME + r",[^.;]{0,60}?\b(?:each|every|all)\b[^.;]{0,40}?\b(?:directors?|nominees?)\b[^.;]{0,40}?\bindependent",
     re.IGNORECASE)
 INDEP_PCT = re.compile(r"(\d{2,3})\s?%\s+(?:of\s+(?:our|the)\s+(?:board\s+|director\s+)?(?:nominees|directors|members|board)\s+(?:are\s+|is\s+)?)?independent",
                        re.IGNORECASE)
@@ -133,7 +140,7 @@ def board_independence(text):
             if 0 < ind and 3 <= ind + others <= 30:
                 return {"independent": ind, "total": ind + others, "pct": ind / (ind + others) * 100, "evidence": _quote(s, at=m.start())}
         if all_but is None:
-            m = INDEP_ALL_BUT.search(s) or INDEP_ALL_EXCEPT.search(s)
+            m = INDEP_ALL_BUT.search(s) or INDEP_ALL_EXCEPT.search(s) or INDEP_EXCEPT_FIRST.search(s)
             if m:
                 all_but = {"independent": None, "total": None, "pct": None, "except": m.group(1).strip(), "evidence": _quote(s, at=m.start())}
         if pct_hit is None:

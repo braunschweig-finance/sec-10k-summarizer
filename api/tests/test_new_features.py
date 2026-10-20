@@ -87,6 +87,13 @@ def test_votes_quoted_around_the_number_and_floors_skipped():
 def test_abbreviations_do_not_split_sentences():
     got = gm.board_independence("All director nominees are independent, except Mr. Decker, our Chair and CEO.")
     assert got["except"] == "Mr. Decker"
+    cases = {
+        "The Board has determined that all of our current Directors (other than Dr. Albert Bourla) are independent.": "Dr. Albert Bourla",
+        "Nearly All Directors Are Independent All of our director nominees are independent, with the exception of our CEO.": "our CEO",
+        "With the exception of Mr. Decker, our Chair, President and CEO, each director was independent throughout Fiscal 2025.": "Mr. Decker",
+    }
+    for text, name in cases.items():
+        assert gm.board_independence(text)["except"] == name, text
 
 
 @pytest.mark.parametrize("text,metric,expected", REAL)
