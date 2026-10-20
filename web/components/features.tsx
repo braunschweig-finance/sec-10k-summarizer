@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import type { PayEfficiency, Report, TrendYear } from "@/lib/types";
 import { API_URL, downloadExport, fetchPayEfficiency, fetchReport } from "@/lib/api";
 import { BarChart, DotStrip, LineChart, SERIES } from "./charts";
+import { QUICK } from "@/lib/tickers";
 
 const fmtM = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 const fmtPct = (d: number) => (v: number) => `${v.toFixed(d)}%`;
@@ -225,11 +226,11 @@ const ROWS: { label: string; get: (s: Side) => { text: string; num: number | nul
 ];
 
 export function ComparePanel({ report }: { report: Report }) {
-  const [input, setInput] = useState(report.ticker === "DE" ? "CAT" : "DE");
+  const [input, setInput] = useState("");
   const [other, setOther] = useState<Side | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const quick = ["DE", "CAT", "AAPL", "MSFT", "JPM"].filter((t) => t !== report.ticker).slice(0, 4);
+  const quick = QUICK.filter((t) => t !== report.ticker).slice(0, 4);
 
   async function compare(sym: string) {
     const t = sym.toUpperCase().trim();
@@ -269,6 +270,7 @@ export function ComparePanel({ report }: { report: Report }) {
           value={input}
           onChange={(e) => setInput(e.target.value.toUpperCase())}
           aria-label="Ticker to compare"
+          placeholder="e.g. MSFT"
           spellCheck={false}
           autoComplete="off"
           className="w-28 rounded-xl border border-line bg-ink px-3 py-2 font-mono tracking-wider uppercase outline-none focus:border-brass"
