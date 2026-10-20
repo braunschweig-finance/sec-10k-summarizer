@@ -263,11 +263,15 @@ export function DotStrip({ values, mark, markLabel, median }: { values: number[]
   const height = 92;
   const left = 16;
   const right = 16;
-  // Most companies sit between 0% and a few percent; a handful run far higher, so the axis stops at 5% (or the company's value)
-  const lo = Math.min(0, mark);
-  const hi = Math.max(5, Math.ceil(mark));
+  // Most companies sit between 0% and a few percent; a handful run far higher, so the axis stops at 5% (or the company's
+  // value, up to 25%). A company past that is pinned to the edge with its value written next to it.
+  const CAP = 25;
+  const lo = Math.min(0, Math.max(-CAP, mark));
+  const hi = Math.max(5, Math.ceil(Math.min(CAP, mark)));
+  const pinned = mark > hi ? "right" : mark < lo ? "left" : null;
   const x = (v: number) => left + ((Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo)) * (width - left - right);
-  const step = hi - lo > 10 ? 5 : 1;
+  // About 6 labels whatever the range, so they never run into each other
+  const step = [1, 2, 5, 10].find((s) => (hi - lo) / s <= 6) ?? 10;
   const ticks = Array.from({ length: Math.floor((hi - lo) / step) + 1 }, (_, k) => Math.ceil(lo / step) * step + k * step).filter((t) => t <= hi);
   const beyond = values.filter((v) => v > hi).length;
   const below = values.filter((v) => v < lo).length;
@@ -303,6 +307,11 @@ export function DotStrip({ values, mark, markLabel, median }: { values: number[]
         <motion.g initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 15, delay: 0.4 }} style={{ originX: `${x(mark)}px`, originY: "52px" }}>
           <circle cx={x(mark)} cy={52} r={7} fill="var(--color-violet)" stroke="var(--color-panel)" strokeWidth={2} />
         </motion.g>
+        {pinned && (
+          <text x={x(mark) + (pinned === "right" ? -12 : 12)} y={40} textAnchor={pinned === "right" ? "end" : "start"} className="fill-violet font-mono text-[11px] font-bold">
+            {pinned === "right" ? `${mark.toFixed(1)}% (off the scale) →` : `← ${mark.toFixed(1)}% (off the scale)`}
+          </text>
+        )}
         {ticks.map((t) => (
           <text key={t} x={x(t)} y={78} textAnchor="middle" className="fill-muted font-mono text-[10px]">
             {t}%

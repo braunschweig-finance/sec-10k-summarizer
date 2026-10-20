@@ -173,10 +173,21 @@ export function PeerRank({ pe }: { pe: Extract<PayEfficiency, { available: true 
         </span>
       </div>
       <p className="text-sm">
-        <span className="font-display text-2xl font-bold text-violet">Lower than {lower}%</span>{" "}
-        <span className="text-muted">
-          of {p.count} S&amp;P 500 companies ({p.higher_count} of them paid their CEO a bigger share of operating income).
-        </span>
+        {p.higher_count === 0 ? (
+          <>
+            <span className="font-display text-2xl font-bold text-violet">Highest</span>{" "}
+            <span className="text-muted">
+              of {p.count} S&amp;P 500 companies (none of them paid their CEO a bigger share of operating income).
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="font-display text-2xl font-bold text-violet">Lower than {lower}%</span>{" "}
+            <span className="text-muted">
+              of {p.count} S&amp;P 500 companies ({p.higher_count} of them paid their CEO a bigger share of operating income).
+            </span>
+          </>
+        )}
       </p>
       <DotStrip values={p.values} mark={pe.pct} markLabel={`${fyLabel(pe.fy_end)} Pay Efficiency`} median={p.median} />
       <p className="text-xs text-muted">
