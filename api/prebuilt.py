@@ -2,8 +2,8 @@
 Ready-made results for Russell 1000 and S&P 500 companies. Render's free plan gives the API a tenth of a CPU, so reading a 10-K
 there takes 20-50 seconds (JPMorgan's took 52 s at that CPU share and 5 s with one full CPU). A GitHub Actions job
 (.github/workflows/prebuild.yml) runs the same lookups on GitHub's faster machines every week and publishes the
-results as one file. The API downloads it at startup and twice a day and answers from it; any other company is
-read live from SEC as before.
+results as one file. The API downloads it at startup, again within an hour of each new build, and at least twice a
+day, and answers from it; any other company is read live from SEC as before.
 """
 import json
 import os
@@ -20,10 +20,18 @@ URL = os.environ.get(
 )
 DIR = os.environ.get("PREBUILT_DIR", "/tmp/prebuilt")
 KINDS = ("company", "governance", "pay_efficiency", "trends", "risks")
+# GitHub's release API says when the file was last published, so a new build is picked up within the hour even when
+# the API itself was redeployed (and loaded the old file) while the build was still running
+RELEASE_API = os.environ.get(
+    "PREBUILT_RELEASE_API",
+    "https://api.github.com/repos/braunschweig-finance/sec-10k-summarizer/releases/tags/prebuilt-data",
+)
+CHECK_SECONDS = 3600
 REFRESH_SECONDS = 12 * 3600
 RETRY_SECONDS = 15 * 60  # until the first download works (e.g. the weekly file hasn't been built yet)
 _on_refresh = []  # called after new files are swapped in, e.g. to drop results cached from the old ones
 _status = {"built_at": None, "companies": 0, "loaded_at": None, "error": None}
+_state = {"published": None, "refreshed": 0.0}
 
 
 def get(kind, ticker):
@@ -76,10 +84,30 @@ def refresh():
         return False
 
 
+def published_at():
+    """When prebuilt.tar.gz was last uploaded to the release, or None if GitHub can't be asked right now."""
+    try:
+        r = httpx.get(RELEASE_API, timeout=30, follow_redirects=True)
+        r.raise_for_status()
+        return max(a["updated_at"] for a in r.json()["assets"] if a["name"] == "prebuilt.tar.gz")
+    except Exception:
+        return None
+
+
+def check(now=None):
+    """Downloads the file when nothing is loaded yet, when a newer build was published, or every 12 hours regardless."""
+    now = time.time() if now is None else now
+    stamp = published_at()
+    stale = now - _state["refreshed"] >= REFRESH_SECONDS
+    if not _status["loaded_at"] or stale or (stamp and stamp != _state["published"]):
+        if refresh():
+            _state.update(published=stamp, refreshed=now)
+
+
 def _loop():
     while True:
-        ok = refresh()
-        time.sleep(REFRESH_SECONDS if ok or _status["loaded_at"] else RETRY_SECONDS)
+        check()
+        time.sleep(CHECK_SECONDS if _status["loaded_at"] else RETRY_SECONDS)
 
 
 def start(on_refresh=None):
