@@ -216,7 +216,7 @@ def sec_check():
 def company(ticker: str):
     report = lookup(cached_financials, ticker)
     # Sector medians come from the ready-made Russell 1000 results, so they cost nothing to add here
-    return {**report, "benchmark": benchmarks.for_ticker(report["ticker"], prebuilt.benchmarks_path())}
+    return {**report, "benchmark": benchmarks.for_company(report.get("sic"), prebuilt.benchmarks_path())}
 
 
 @app.get("/api/governance/{ticker}")

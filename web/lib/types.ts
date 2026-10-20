@@ -99,6 +99,7 @@ export type Benchmark = {
   metrics: Record<string, BenchStat>;
   source: string;
   built_at?: string;
+  sic?: string;
   note?: string;
 };
 

@@ -1,8 +1,9 @@
 """
 Sector medians for the ratio cards and governance numbers. Built by prebuild.py from the ready-made results of every
-Russell 1000 company, grouped by GICS sector (data/russell1000.csv, from Wikipedia's Russell 1000 Index page), and
-published in the same file as those results. Each company's own latest 10-K and proxy are used, so fiscal years can
-differ by up to a year between companies. Companies outside the Russell 1000 are compared with all of it.
+Russell 1000 company (data/russell1000.csv), grouped into sectors by each company's SEC industry code (sectors.py),
+and published in the same file as those results. Each company's own latest 10-K and proxy are used, so fiscal years
+can differ by up to a year between companies. Any company, in the index or not, is compared with the Russell 1000
+companies in its sector.
 """
 import csv
 import json
@@ -10,24 +11,24 @@ import os
 
 import peers
 import sec_core
+import sectors
 
 RUSSELL_FILE = os.path.join(os.path.dirname(__file__), "data", "russell1000.csv")
-SOURCE = ("Russell 1000 companies' latest 10-K and proxy (DEF 14A) on SEC EDGAR, grouped by GICS sector as listed on "
-          "Wikipedia's Russell 1000 Index page")
+SOURCE = ("Russell 1000 companies (Vanguard Russell 1000 ETF holdings), each from its latest 10-K and proxy (DEF 14A) on SEC "
+          "EDGAR, grouped into sectors by SEC industry (SIC) code")
 MIN_GROUP = 5  # fewer companies than this with a value and no median is shown for that metric
 
 
 def russell_members():
-    """{ticker: {"company", "sector"}} from the committed list (skips the # source line)."""
+    """{ticker: company name} from the committed list (skips the # source line)."""
     if not os.path.exists(RUSSELL_FILE):
         return {}
     with open(RUSSELL_FILE, newline="") as f:
-        rows = csv.DictReader(line for line in f if not line.startswith("#"))
-        return {r["ticker"]: {"company": r["company"], "sector": r["sector"]} for r in rows}
+        return {r["ticker"]: r["company"] for r in csv.DictReader(line for line in f if not line.startswith("#"))}
 
 
 def company_values(folder):
-    """The benchmarked numbers for one company's ready-made results folder, or {} if there's no 10-K result."""
+    """(sector, the benchmarked numbers) for one company's ready-made results folder, or (None, {}) without a 10-K result."""
     def read(kind):
         try:
             with open(os.path.join(folder, f"{kind}.json")) as f:
@@ -38,7 +39,7 @@ def company_values(folder):
 
     report = read("company")
     if not report:
-        return {}
+        return None, {}
     vals = sec_core.ratio_values(report.get("inputs", {}))
     pe = read("pay_efficiency")
     if pe and pe.get("available") and pe.get("denominator") == "operating":
@@ -48,7 +49,7 @@ def company_values(folder):
     vals["CEO Pay Ratio"] = (m.get("CEO Pay Ratio") or {}).get("value")
     vals["Board Independence"] = (m.get("Board Independence") or {}).get("pct")
     vals["Say-on-Pay Support"] = (m.get("Say-on-Pay Support") or {}).get("pct")
-    return vals
+    return sectors.sector(report.get("sic")), vals
 
 
 def summarize(values):
@@ -59,15 +60,14 @@ def summarize(values):
 
 
 def build(out_dir, members=None):
-    """benchmarks.json contents: medians per sector and for the whole Russell 1000, plus each member's sector."""
+    """benchmarks.json contents: medians per sector and for the whole Russell 1000."""
     members = russell_members() if members is None else members
     by_sector, everyone = {}, {}
-    for ticker, info in members.items():
-        vals = company_values(os.path.join(out_dir, ticker))
-        if not vals:
-            continue
+    for ticker in members:
+        sector, vals = company_values(os.path.join(out_dir, ticker))
         for k, v in vals.items():
-            by_sector.setdefault(info["sector"], {}).setdefault(k, []).append(v)
+            if sector:
+                by_sector.setdefault(sector, {}).setdefault(k, []).append(v)
             everyone.setdefault(k, []).append(v)
 
     def group(metrics):
@@ -78,7 +78,6 @@ def build(out_dir, members=None):
         "source": SOURCE,
         "sectors": {s: group(m) for s, m in sorted(by_sector.items())},
         "all": group(everyone),
-        "members": {t: info["sector"] for t, info in members.items()},
     }
 
 
@@ -97,17 +96,17 @@ def load(path):
     return _cache["data"]
 
 
-def for_ticker(ticker, path):
-    """The comparison group for one company: its sector if it's a Russell 1000 member, otherwise the whole index."""
+def for_company(sic, path):
+    """The comparison group for a company with this SIC code: the Russell 1000 companies in its sector, or the whole
+    index when the code has no sector."""
     data = load(path)
     if not data:
         return None
-    sector = data["members"].get(ticker.upper())
+    sector = sectors.sector(sic)
+    base = {"source": data["source"], "built_at": data.get("built_at"), "sic": str(sic or "")}
     if sector and sector in data["sectors"]:
         g = data["sectors"][sector]
-        return {"group": sector, "is_sector": True, "companies": g["companies"], "metrics": g["metrics"], "source": data["source"],
-                "built_at": data.get("built_at")}
+        return {**base, "group": sector, "is_sector": True, "companies": g["companies"], "metrics": g["metrics"]}
     g = data["all"]
-    return {"group": "Russell 1000", "is_sector": False, "companies": g["companies"], "metrics": g["metrics"], "source": data["source"],
-            "built_at": data.get("built_at"),
-            "note": "This company isn't in the Russell 1000 list, so it's compared with the whole index instead of its sector."}
+    return {**base, "group": "Russell 1000", "is_sector": False, "companies": g["companies"], "metrics": g["metrics"],
+            "note": "SEC's industry code for this company doesn't map to a sector, so it's compared with the whole index."}

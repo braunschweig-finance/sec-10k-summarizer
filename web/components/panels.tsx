@@ -75,7 +75,9 @@ export function RatiosPanel({ report }: { report: Report }) {
       {report.benchmark && (
         <p className="-mt-4 text-xs text-muted">
           Medians: {report.benchmark.is_sector ? `${report.benchmark.group} companies in the Russell 1000` : "all Russell 1000 companies"}, each from its
-          own latest 10-K. {report.benchmark.note}
+          own latest 10-K. Sector comes from SEC&apos;s industry code for the company
+          {report.benchmark.sic ? ` (SIC ${report.benchmark.sic}${report.industry ? `, ${report.industry}` : ""})` : ""}, so it can differ from
+          other classifications. {report.benchmark.note}
         </p>
       )}
 

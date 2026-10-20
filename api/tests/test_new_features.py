@@ -212,24 +212,21 @@ def test_prices_fail_softly(monkeypatch):
 # ---------- Sector medians ----------
 
 def test_benchmarks_by_sector_by_hand(tmp_path):
-    def company(t, gp, op, rev):
+    def company(t, gp, op, rev, sic="3531"):
         d = tmp_path / t
         d.mkdir()
         inputs = {"Revenue": {"value_m": rev}, "Gross Profit": {"value_m": gp}, "Operating Income": {"value_m": op},
                   "Current Assets": {"value_m": 10}, "Current Liabilities": {"value_m": 5}, "Total Liabilities": {"value_m": 30},
                   "Shareholders' Equity": {"value_m": 10}}
-        (d / "company.json").write_text(json.dumps({"ticker": t, "inputs": inputs}))
+        (d / "company.json").write_text(json.dumps({"ticker": t, "sic": sic, "inputs": inputs}))
         (d / "governance.json").write_text(json.dumps({"metrics": {"CEO Pay Ratio": {"value": op}, "Board Independence": None}}))
-    members = {}
-    # Five industrials with operating margins 10, 20, 30, 40, 50% (revenue 100)
+    # Five industrials (SIC 3531, construction machinery) with operating margins 10, 20, 30, 40, 50% (revenue 100)
     for i, op in enumerate([10, 20, 30, 40, 50]):
         company(f"I{i}", 40, op, 100)
-        members[f"I{i}"] = {"company": "", "sector": "Industrials"}
-    company("T0", 60, 25, 100)
-    members["T0"] = {"company": "", "sector": "Information Technology"}
+    company("T0", 60, 25, 100, sic="3674")                                  # semiconductors: Information Technology
     (tmp_path / "X0").mkdir()
     (tmp_path / "X0" / "company.json").write_text(json.dumps({"__unavailable__": "no 10-K"}))
-    members["X0"] = {"company": "", "sector": "Industrials"}
+    members = {t: "" for t in ["I0", "I1", "I2", "I3", "I4", "T0", "X0", "MISSING"]}
 
     b = benchmarks.build(str(tmp_path), members)
     ind = b["sectors"]["Industrials"]["metrics"]
@@ -241,9 +238,10 @@ def test_benchmarks_by_sector_by_hand(tmp_path):
 
     path = tmp_path / "benchmarks.json"
     path.write_text(json.dumps(b))
-    assert benchmarks.for_ticker("i3", str(path))["group"] == "Industrials"
-    other = benchmarks.for_ticker("ZZZZ", str(path))
+    assert benchmarks.for_company("3537", str(path))["group"] == "Industrials"    # any company, in the index or not
+    other = benchmarks.for_company("9995", str(path))
     assert other["group"] == "Russell 1000" and not other["is_sector"] and other["note"]
+    assert benchmarks.for_company("3531", str(tmp_path / "none.json")) is None
 
 
 def test_ratio_values_match_compute_ratios_rules():
