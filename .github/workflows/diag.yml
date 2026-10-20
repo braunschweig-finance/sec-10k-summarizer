@@ -1,0 +1,35 @@
+name: Diagnose speed
+on:
+  push:
+    branches: [feat/faster-search]
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Time the live API on companies it has not cached
+        run: |
+          B=https://sec-terminal-api.onrender.com
+          curl -s -w " sec-check %{time_total}s\n" $B/api/sec-check
+          for t in KO V; do
+            for p in company governance pay-efficiency trends; do
+              curl -s -o /dev/null -w "$t $p %{http_code} %{time_total}s\n" --max-time 150 $B/api/$p/$t
+            done
+          done
+  cpu:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cpus: ['0.1', '1']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the API with Render free's CPU share and time each step
+        run: |
+          docker run -d --name api --memory=512m --cpus=${{ matrix.cpus }} -p 8000:8000 -v $PWD/api:/app -w /app python:3.13-slim \
+            sh -c "pip install -q -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
+          for i in $(seq 1 300); do curl -sf localhost:8000/health >/dev/null && break; sleep 2; done
+          for t in AAPL JPM; do
+            for p in company governance pay-efficiency trends; do
+              curl -s -o /dev/null -w "cpus=${{ matrix.cpus }} $t $p %{http_code} %{time_total}s\n" --max-time 300 localhost:8000/api/$p/$t
+            done
+          done
+          docker logs api 2>&1 | grep -E "done in|failed|timed out" | tail -20
