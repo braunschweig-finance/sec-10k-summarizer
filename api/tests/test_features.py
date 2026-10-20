@@ -310,6 +310,23 @@ def test_prebuilt_results_are_served_without_reading_sec(tmp_path, monkeypatch):
     main.cached_financials.cache_clear()
 
 
+def test_new_build_is_picked_up_within_the_hour(monkeypatch):
+    import prebuilt
+    downloads, stamp = [], ["2026-10-20T22:10:00Z"]
+    monkeypatch.setattr(prebuilt, "published_at", lambda: stamp[0])
+    monkeypatch.setattr(prebuilt, "refresh", lambda: downloads.append(1) or prebuilt._status.update(loaded_at="x") or True)
+    monkeypatch.setattr(prebuilt, "_status", {"loaded_at": None})
+    monkeypatch.setattr(prebuilt, "_state", {"published": None, "refreshed": 0.0})
+    prebuilt.check(now=100_000)                       # startup: downloads
+    prebuilt.check(now=100_000 + 3600)                # same build an hour later: nothing to do
+    assert len(downloads) == 1
+    stamp[0] = "2026-10-20T22:35:00Z"                 # the weekly job published a new file
+    prebuilt.check(now=100_000 + 7200)
+    assert len(downloads) == 2
+    prebuilt.check(now=100_000 + 7200 + 12 * 3600)    # 12 hours on, downloads anyway
+    assert len(downloads) == 3
+
+
 def test_prebuilt_download_failure_keeps_current_files(tmp_path, monkeypatch):
     import prebuilt
     monkeypatch.setattr(prebuilt, "DIR", str(tmp_path / "prebuilt"))
