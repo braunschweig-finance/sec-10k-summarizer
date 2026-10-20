@@ -80,6 +80,7 @@ def fake_sec(monkeypatch):
     monkeypatch.setattr(sec_core, "companyfacts", lambda cik: GAAP)
     monkeypatch.setattr(sec_core, "instance_url", lambda cik, accn: "https://x/proxy_htm.xml")
     monkeypatch.setattr(sec_core, "sec_fetch", lambda url: PVP)
+    monkeypatch.setattr(sec_core.prices, "year_end_closes", lambda t, ends: {"available": False, "reason": "offline test", "source": ""})
 
 
 def test_trends_take_last_five_years_as_first_reported(fake_sec):

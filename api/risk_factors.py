@@ -7,29 +7,52 @@ Companies write each risk factor as a bold or italic heading sentence followed b
 are the emphasized paragraphs inside Item 1A. Only the Item 1A part of the HTML is parsed, which keeps memory low
 even for very long 10-Ks.
 """
+import html as html_lib
 import re
 from difflib import SequenceMatcher
 
 import lxml.html
 
 GAP = r"(?:\s|&#160;|&nbsp;|&#xa0;|<[^>]{0,400}>)*"
-ITEM_1A = re.compile(r"item" + GAP + r"1a\b", re.IGNORECASE)
-NEXT_ITEM = re.compile(r"item" + GAP + r"(?:1b|1c|2)\b", re.IGNORECASE)
+ITEM = re.compile(r"item" + GAP + r"(1a|1b|1c|7a|[2-9]|1[0-6])\b", re.IGNORECASE)
 BLOCKS = {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td"}
 BOLD = re.compile(r"font-weight\s*:\s*(?:bold|bolder|[6-9]00)", re.IGNORECASE)
 ITALIC = re.compile(r"font-style\s*:\s*(?:italic|oblique)", re.IGNORECASE)
 UNDERLINE = re.compile(r"text-decoration\s*:\s*underline", re.IGNORECASE)
 
 
+def _plain(fragment):
+    return html_lib.unescape(re.sub(r"<[^>]*>", " ", fragment)).replace("\xa0", " ")
+
+
+BLOCK_TAG = re.compile(r"<(?:/?(?:p|div|td|th|tr|li|h[1-6]|table|tbody)\b|br\b)[^>]*>", re.IGNORECASE)
+
+
+def _is_heading(html, pos):
+    """True when an "Item ..." at pos starts its own block (a heading or table of contents entry), not a mention inside
+    a sentence such as "see Item 7, Management's Discussion"."""
+    window = html[max(0, pos - 3000):pos]
+    last = None
+    for last in BLOCK_TAG.finditer(window):
+        pass
+    lead = _plain(window[last.end():] if last else window).strip()
+    return lead == "" or bool(re.fullmatch(r"part\s+[iv]+\s*[.,:\u2014\u2013-]?", lead, re.IGNORECASE))
+
+
 def item_1a_html(html):
-    """The raw HTML of Item 1A: of every 'Item 1A' to the next 'Item 1B/1C/2', the longest stretch (the table of
-    contents has the same words, but its stretch is short). None if the 10-K has no Item 1A."""
+    """The raw HTML of Item 1A: from an "Item 1A ... Risk Factors" heading to the next Item heading. Of all such
+    stretches the longest wins, since the table of contents has the same words but almost nothing between them.
+    None if the 10-K has no Item 1A heading."""
+    heads = [(m.start(), m.group(1).lower()) for m in ITEM.finditer(html) if _is_heading(html, m.start())]
     best = None
-    for m in ITEM_1A.finditer(html):
-        nxt = NEXT_ITEM.search(html, m.end())
-        end = nxt.start() if nxt else min(len(html), m.end() + 3_000_000)
-        if best is None or end - m.start() > best[1] - best[0]:
-            best = (m.start(), end)
+    for k, (pos, item) in enumerate(heads):
+        if item != "1a" or "risk factors" not in _plain(html[pos:pos + 1500]).lower()[:300]:
+            continue
+        end = next((p for p, it in heads[k + 1:] if it != "1a"), None)
+        if end is None:
+            continue
+        if best is None or end - pos > best[1] - best[0]:
+            best = (pos, end)
     if best is None:
         return None
     # Back up to the start of the tag that holds "Item 1A", so the fragment parses cleanly

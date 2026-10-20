@@ -23,9 +23,12 @@ def in_child(fn, ticker):
     """Runs fn(ticker) in a forked child like the API does; returns (result or error, seconds, peak MB)."""
     r, w = os.pipe()
     started = time.time()
+    sys.stdout.flush()  # or the child inherits unprinted lines and prints them again
     pid = os.fork()
     if pid == 0:
         os.close(r)
+        import signal
+        signal.alarm(150)  # the API stops a lookup after 120 s; a stuck one here shouldn't hang the whole check
         try:
             out = {"ok": fn(ticker)}
         except sec_core.DataUnavailable as e:
@@ -43,11 +46,33 @@ def in_child(fn, ticker):
 
 
 def nasdaq_close(ticker, day):
+    from datetime import date, timedelta
     url = f"https://api.nasdaq.com/api/quote/{ticker.replace('-', '.')}/historical"
-    r = httpx.get(url, params={"assetclass": "stocks", "fromdate": day, "todate": day, "limit": 5},
-                  headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36"}, timeout=30)
+    start = (date.fromisoformat(day) - timedelta(days=7)).isoformat()
+    r = httpx.get(url, params={"assetclass": "stocks", "fromdate": start, "todate": day, "limit": 10},
+                  headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+                           "Accept": "application/json"}, timeout=30)
     rows = ((r.json().get("data") or {}).get("tradesTable") or {}).get("rows") or []
-    return float(rows[0]["close"].replace("$", "").replace(",", "")) if rows else None
+    want = f"{day[5:7]}/{day[8:10]}/{day[:4]}"
+    hit = next((x for x in rows if x["date"] == want), None)
+    return float(hit["close"].replace("$", "").replace(",", "")) if hit else f"no {want} row in {[x['date'] for x in rows]}"
+
+
+def debug_misses(ticker, metrics):
+    """For a number that wasn't found, the proxy sentences that came closest, to see how this filer words it."""
+    import re
+    import governance_metrics as gm
+    from edgar import Company
+    misses = [k for k, v in metrics.items() if not v or (k == "Board Independence" and v.get("pct") is None)]
+    if not misses:
+        return
+    proxy = sec_core.latest_filings(Company(ticker), "DEF 14A")[0]
+    flat = sec_core.clean_governance_text(sec_core.get_proxy_text(proxy)[0])
+    probes = {"CEO Pay Ratio": r"ratio", "Board Independence": r"\bindependent\b", "Say-on-Pay Support": r"say[- ]on[- ]pay|votes cast"}
+    for k in misses:
+        hits = [s for _, s in gm.sentences(flat) if re.search(probes[k], s, re.I) and re.search(r"\d", s)][:4]
+        for h in hits:
+            print(f"      ? {k}: {h[:260]}")
 
 
 def main():
@@ -62,6 +87,8 @@ def main():
                 print(f"      \"{m['evidence'][:400]}\"")
         if "ok" not in g:
             print("  ", g)
+        else:
+            debug_misses(t, g["ok"]["metrics"])
 
         rs, secs, mb = in_child(sec_core.get_risk_summary, t)
         print(f"risks: {secs:.1f}s, peak {mb:.0f} MB")

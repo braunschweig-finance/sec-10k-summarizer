@@ -3,16 +3,18 @@
 import { useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import type { Report } from "@/lib/types";
-import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchTrends } from "@/lib/api";
+import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchRisks, fetchTrends } from "@/lib/api";
 import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
+import { SummaryPanel } from "./summary";
 import { QUICK } from "@/lib/tickers";
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
   { id: "trends", label: "Trends" },
   { id: "compare", label: "Compare" },
+  { id: "summary", label: "10-K Summary" },
   { id: "statements", label: "Statements" },
   { id: "governance", label: "Governance" },
   { id: "memo", label: "AI Memo" },
@@ -62,6 +64,12 @@ export default function Terminal() {
             fetchTrends(t)
               .then((tr) => update({ trends: tr }))
               .catch((e) => update({ trendsError: (e as Error).message }))
+              // Risk factors last: the API reads one company's filings at a time, so this doesn't slow the others
+              .finally(() =>
+                fetchRisks(t)
+                  .then((rk) => update({ risks: rk }))
+                  .catch((e) => update({ risksError: (e as Error).message }))
+              )
           );
       }
     } catch (e) {
@@ -252,6 +260,7 @@ export default function Terminal() {
                   {tab === "ratios" && <RatiosPanel report={report} />}
                   {tab === "trends" && <TrendsPanel report={report} />}
                   {tab === "compare" && <ComparePanel report={report} />}
+                  {tab === "summary" && <SummaryPanel report={report} />}
                   {tab === "statements" && <StatementsPanel report={report} />}
                   {tab === "governance" && <GovernancePanel report={report} />}
                   {tab === "memo" && <MemoPanel report={report} />}

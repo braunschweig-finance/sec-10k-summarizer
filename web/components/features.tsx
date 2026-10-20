@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import type { PayEfficiency, Report, TrendYear } from "@/lib/types";
 import { API_URL, downloadExport, fetchPayEfficiency, fetchReport } from "@/lib/api";
-import { BarChart, DotStrip, LineChart, SERIES } from "./charts";
+import { BarChart, DotStrip, DualAxisChart, LineChart, SERIES } from "./charts";
 import { QUICK } from "@/lib/tickers";
 
 const fmtM = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
@@ -93,21 +93,7 @@ export function TrendsPanel({ report }: { report: Report }) {
           </div>
         </Card>
       </div>
-      {pe.length > 0 && (
-        <Card title="Pay Efficiency" note="CEO pay actually paid ÷ operating income">
-          <LineChart
-            labels={pe.map((p) => fyLabel(p.fy_end))}
-            ariaLabel="Pay Efficiency"
-            format={fmtPct(2)}
-            height={220}
-            series={[{ name: "Pay Efficiency", color: SERIES.violet, values: pe.map((p) => p.pct) }]}
-          />
-          <p className="text-xs text-muted">
-            Every year in the latest proxy&apos;s Pay Versus Performance table. A gap means an operating loss that year, where the ratio isn&apos;t
-            meaningful.
-          </p>
-        </Card>
-      )}
+      {pe.length > 0 && <PayVsPrice pe={pe} trends={report.trends} />}
 
       <div className="overflow-x-auto rounded-2xl border border-line">
         <table className="w-full min-w-[760px] text-sm">
@@ -155,6 +141,93 @@ export function TrendsPanel({ report }: { report: Report }) {
         filed) say so in the concept.
       </p>
     </div>
+  );
+}
+
+// ---------- Pay Efficiency against the share price and shareholder return ----------
+
+const fmtUsd = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function PayVsPrice({ pe, trends }: { pe: NonNullable<Extract<PayEfficiency, { available: true }>["history"]>; trends: NonNullable<Report["trends"]> }) {
+  const prices = trends.prices?.available ? trends.prices.years : [];
+  // A proxy's fiscal year end and a 10-K's can differ by a few days (52/53-week years), so match within 10 days
+  const priceFor = (fyEnd: string) =>
+    prices.find((p) => Math.abs(new Date(p.fy_end).getTime() - new Date(fyEnd).getTime()) <= 10 * 86400_000) ?? null;
+  const rows = pe.map((p) => ({ ...p, price: priceFor(p.fy_end) }));
+  const hasPrice = rows.some((r) => r.price?.close != null);
+  const labels = rows.map((r) => fyLabel(r.fy_end));
+
+  return (
+    <Card title={hasPrice ? "Pay Efficiency vs. share price" : "Pay Efficiency"} note="CEO pay actually paid ÷ operating income">
+      {hasPrice ? (
+        <>
+          <DualAxisChart
+            labels={labels}
+            ariaLabel="Pay Efficiency (left axis) and share price at fiscal year end (right axis)"
+            left={{ name: "Pay Efficiency", color: SERIES.violet, values: rows.map((r) => r.pct), format: fmtPct(2) }}
+            right={{ name: "Share price", color: SERIES.gold, values: rows.map((r) => r.price?.close ?? null), format: (v) => `$${Math.round(v)}` }}
+          />
+          <div className="flex flex-wrap gap-4 text-xs text-muted">
+            <span className="flex items-center gap-2">
+              <span className="h-0.5 w-4 rounded" style={{ background: SERIES.violet }} /> Pay Efficiency (left axis)
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: SERIES.gold }} /> Share price at fiscal year end (right axis)
+            </span>
+          </div>
+        </>
+      ) : (
+        <LineChart
+          labels={labels}
+          ariaLabel="Pay Efficiency"
+          format={fmtPct(2)}
+          height={220}
+          series={[{ name: "Pay Efficiency", color: SERIES.violet, values: rows.map((r) => r.pct) }]}
+        />
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-sm">
+          <thead className="text-muted">
+            <tr>
+              {["Fiscal year", "Pay Efficiency", "Share price", "Price change", "TSR ($100 invested)", "Peer group TSR"].map((h, i) => (
+                <th key={h} className={`px-3 py-2 font-medium ${i === 0 ? "text-left" : "text-right"}`}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const prev = i > 0 ? rows[i - 1].price?.close : null;
+              const close = r.price?.close ?? null;
+              const change = prev && close ? ((close - prev) / prev) * 100 : null;
+              return (
+                <tr key={r.fy_end} className="border-t border-line">
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {fyLabel(r.fy_end)} <span className="text-muted">({r.fy_end})</span>
+                  </td>
+                  <td className="tnum px-3 py-2 text-right font-mono">{r.value}</td>
+                  <td className="tnum px-3 py-2 text-right font-mono" title={r.price?.date ? `Close on ${r.price.date}` : undefined}>
+                    {close !== null ? fmtUsd(close) : "N/A"}
+                  </td>
+                  <td className={`tnum px-3 py-2 text-right font-mono ${change === null ? "text-muted" : change >= 0 ? "text-teal" : "text-rose"}`}>
+                    {change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`}
+                  </td>
+                  <td className="tnum px-3 py-2 text-right font-mono">{r.tsr != null ? fmtUsd(r.tsr) : "N/A"}</td>
+                  <td className="tnum px-3 py-2 text-right font-mono text-muted">{r.peer_tsr != null ? fmtUsd(r.peer_tsr) : "N/A"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs leading-relaxed text-muted">
+        Pay Efficiency and TSR: every year in the latest proxy&apos;s Pay Versus Performance table (TSR is the value of $100 invested at the start
+        of the table&apos;s first year, tagged ecd:TotalShareholderRtnAmt and ecd:PeerGroupTotalShareholderRtnAmt). A gap means an operating loss
+        that year. Share price:{" "}
+        {hasPrice ? `${trends.prices!.source}, on the last trading day on or before each fiscal year end (hover a price for the date).` : (trends.prices && !trends.prices.available ? trends.prices.reason : "not available.")}
+      </p>
+    </Card>
   );
 }
 
