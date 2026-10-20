@@ -1,0 +1,15 @@
+name: Check live prebuilt
+on:
+  push:
+    branches: [check/live-prebuilt]
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: |
+          B=https://sec-terminal-api.onrender.com
+          for i in $(seq 1 50); do s=$(curl -s $B/api/prebuilt-status); echo "$s"; echo "$s" | grep -q '"companies":5' && break; sleep 30; done
+          for t in AAPL MSFT NVDA TSLA JPM; do
+            curl -s -o /dev/null -w "$t company %{http_code} %{time_total}s\n" --max-time 150 $B/api/company/$t
+          done
