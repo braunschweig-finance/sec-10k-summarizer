@@ -860,13 +860,14 @@ def primary_doc_url(filing):
 
 def risk_headings(filing):
     """Item 1A headings of one 10-K, or None if its Item 1A can't be found or has no readable headings."""
-    html = sec_fetch(primary_doc_url(filing)).decode("utf-8", errors="ignore")
+    html = sec_fetch(primary_doc_url(filing))
     fragment = risk_factors.item_1a_html(html)
     del html
     if not fragment:
         return None
     found = risk_factors.headings(fragment)
-    return found if len(found["risks"]) >= 3 else None
+    # Fewer than five headings means the filer doesn't set its risk factors as headings this page can tell apart
+    return found if len(found["risks"]) >= 5 else None
 
 
 def get_risk_summary(ticker_symbol):

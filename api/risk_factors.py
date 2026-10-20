@@ -13,8 +13,9 @@ from difflib import SequenceMatcher
 
 import lxml.html
 
-GAP = r"(?:\s|&#160;|&nbsp;|&#xa0;|<[^>]{0,400}>)*"
-ITEM = re.compile(r"item" + GAP + r"(1a|1b|1c|7a|[2-9]|1[0-6])\b", re.IGNORECASE)
+# The section search runs on the raw bytes, so a 40 MB 10-K isn't also held as a (up to 4x larger) Python string
+GAP = rb"(?:\s|&#160;|&nbsp;|&#xa0;|<[^>]{0,400}>)*"
+ITEM = re.compile(rb"item" + GAP + rb"(1a|1b|1c|7a|[2-9]|1[0-6])\b", re.IGNORECASE)
 BLOCKS = {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td"}
 BOLD = re.compile(r"font-weight\s*:\s*(?:bold|bolder|[6-9]00)", re.IGNORECASE)
 ITALIC = re.compile(r"font-style\s*:\s*(?:italic|oblique)", re.IGNORECASE)
@@ -22,10 +23,12 @@ UNDERLINE = re.compile(r"text-decoration\s*:\s*underline", re.IGNORECASE)
 
 
 def _plain(fragment):
+    if isinstance(fragment, bytes):
+        fragment = fragment.decode("utf-8", errors="ignore")
     return html_lib.unescape(re.sub(r"<[^>]*>", " ", fragment)).replace("\xa0", " ")
 
 
-BLOCK_TAG = re.compile(r"<(?:/?(?:p|div|td|th|tr|li|h[1-6]|table|tbody)\b|br\b)[^>]*>", re.IGNORECASE)
+BLOCK_TAG = re.compile(rb"<(?:/?(?:p|div|td|th|tr|li|h[1-6]|table|tbody)\b|br\b)[^>]*>", re.IGNORECASE)
 
 
 def _is_heading(html, pos):
@@ -40,15 +43,17 @@ def _is_heading(html, pos):
 
 
 def item_1a_html(html):
-    """The raw HTML of Item 1A: from an "Item 1A ... Risk Factors" heading to the next Item heading. Of all such
+    """The raw HTML (bytes or str in, str out) of Item 1A: from an "Item 1A ... Risk Factors" heading to the next Item heading. Of all such
     stretches the longest wins, since the table of contents has the same words but almost nothing between them.
     None if the 10-K has no Item 1A heading."""
+    if isinstance(html, str):
+        html = html.encode("utf-8")
     heads = [(m.start(), m.group(1).lower()) for m in ITEM.finditer(html) if _is_heading(html, m.start())]
     best = None
     for k, (pos, item) in enumerate(heads):
-        if item != "1a" or "risk factors" not in _plain(html[pos:pos + 1500]).lower()[:300]:
+        if item != b"1a" or "risk factors" not in _plain(html[pos:pos + 1500]).lower()[:300]:
             continue
-        end = next((p for p, it in heads[k + 1:] if it != "1a"), None)
+        end = next((p for p, it in heads[k + 1:] if it != b"1a"), None)
         if end is None:
             continue
         if best is None or end - pos > best[1] - best[0]:
@@ -56,8 +61,8 @@ def item_1a_html(html):
     if best is None:
         return None
     # Back up to the start of the tag that holds "Item 1A", so the fragment parses cleanly
-    start = html.rfind("<", 0, best[0])
-    return html[max(start, 0):best[1]]
+    start = html.rfind(b"<", 0, best[0])
+    return html[max(start, 0):best[1]].decode("utf-8", errors="ignore")
 
 
 def _style_of(el):
@@ -131,6 +136,10 @@ def blocks(fragment_html):
 
 CATEGORY = re.compile(r"^(?:risks?\b|general\b|summary\b|.*\brisks?$|.*\brelated to\b|.*\brelating to\b|.*\bfactors$)", re.IGNORECASE)
 SKIP = re.compile(r"^(?:item\s*1a|risk factors\.?$|table of contents|index|\d+$|page \d+|part i\b)", re.IGNORECASE)
+# Introductions some filers also set in bold or italic ("The following risk factors should be considered...")
+INTRO = re.compile(r"^(?:the\s+following|the\s+above|readers\s+should|you\s+should|investors\s+should|in\s+addition\s+to\s+the\s+other|"
+                   r"this\s+section|we\s+are\s+subject\s+to\s+(?:a\s+)?(?:number|variety)\s+of\s+risks|our\s+business,?\s+(?:operations\s+)?and\s+financial|"
+                   r"an\s+investment\s+in|investing\s+in)", re.IGNORECASE)
 
 
 def headings(fragment_html):
@@ -153,7 +162,7 @@ def headings(fragment_html):
             category = title
             categories.append(title)
             continue
-        if 30 <= len(title) <= 900:
+        if 30 <= len(title) <= 900 and not INTRO.match(title):
             risks.append({"title": title, "category": category})
     return {"categories": categories, "risks": risks, "words": words}
 
