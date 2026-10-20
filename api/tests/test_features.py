@@ -261,3 +261,62 @@ def test_isolated_lookup_returns_result_and_reports_failures():
     # A child stopped by the out-of-memory killer gets a plain explanation, and the server process carries on
     with pytest.raises(RuntimeError, match="too large for the free server's memory"):
         main.isolated(_killed, "C")
+
+
+def _bundle(tmp_path, files):
+    import io, json, tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, body in files.items():
+            data = json.dumps(body).encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_prebuilt_results_are_served_without_reading_sec(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    import main, prebuilt
+    ready = {"ticker": "AAPL", "name": "Apple Inc.", "ratios": {"Gross Margin": "46.9%"}}
+    blob = _bundle(tmp_path, {"manifest.json": {"built_at": "2026-10-20T06:00:00Z", "tickers": ["AAPL"]},
+                              "AAPL/company.json": ready})
+    monkeypatch.setattr(prebuilt, "DIR", str(tmp_path / "prebuilt"))
+    monkeypatch.setattr(prebuilt.httpx, "get", lambda *a, **k: SimpleNamespace(content=blob, raise_for_status=lambda: None))
+    cleared = []
+    monkeypatch.setattr(prebuilt, "_on_refresh", [lambda: cleared.append(True)])
+    assert prebuilt.refresh() and cleared
+    assert prebuilt.status()["companies"] == 1
+
+    def no_sec(t):
+        raise AssertionError("read SEC for a prebuilt company")
+    monkeypatch.setattr(main.sec_core, "get_financial_report", no_sec)
+    main.cached_financials.cache_clear()
+    assert TestClient(main.app).get("/api/company/aapl").json() == ready
+    # Anything not in the file is still read live
+    assert prebuilt.get("governance", "AAPL") is None and prebuilt.get("company", "ZZZZ") is None
+    main.cached_financials.cache_clear()
+
+
+def test_prebuilt_download_failure_keeps_current_files(tmp_path, monkeypatch):
+    import prebuilt
+    monkeypatch.setattr(prebuilt, "DIR", str(tmp_path / "prebuilt"))
+    def boom(*a, **k):
+        raise OSError("network down")
+    monkeypatch.setattr(prebuilt.httpx, "get", boom)
+    assert prebuilt.refresh() is False
+    assert "network down" in prebuilt.status()["error"]
+
+
+def test_prebuild_saves_each_lookup_and_skips_failures(tmp_path, monkeypatch):
+    import json, os
+    import prebuild
+    monkeypatch.chdir(tmp_path)
+    def fails(t):
+        raise ValueError("no proxy")
+    monkeypatch.setattr(prebuild, "LOOKUPS", {"company": lambda t: {"ticker": t}, "governance": fails})
+    ticker, saved, failed = prebuild.build_one("MSFT")
+    assert (ticker, saved) == ("MSFT", ["company"]) and "no proxy" in failed["governance"]
+    assert json.load(open(os.path.join("prebuilt", "MSFT", "company.json"))) == {"ticker": "MSFT"}
+    assert not os.path.exists(os.path.join("prebuilt", "MSFT", "governance.json"))

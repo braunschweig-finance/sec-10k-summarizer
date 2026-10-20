@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import type { Report } from "@/lib/types";
 import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchTrends } from "@/lib/api";
 import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
+import { QUICK } from "@/lib/tickers";
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
@@ -18,10 +19,9 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-const QUICK = ["CAT", "AAPL", "MSFT", "JPM"];
 
 export default function Terminal() {
-  const [ticker, setTicker] = useState("CAT");
+  const [ticker, setTicker] = useState("");
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,11 +73,6 @@ export default function Terminal() {
     }
   }
 
-  // Open on Caterpillar so the page shows real output right away
-  useEffect(() => {
-    load("CAT");
-  }, []);
-
   return (
     <main className="min-h-screen">
       {/* HERO */}
@@ -127,7 +122,7 @@ export default function Terminal() {
                   id="ticker"
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                  placeholder="Ticker, e.g. CAT"
+                  placeholder="Type a ticker, e.g. AAPL"
                   autoComplete="off"
                   spellCheck={false}
                   className="min-w-0 flex-1 bg-transparent py-2 font-mono text-lg tracking-wider uppercase outline-none placeholder:text-muted/60"

@@ -3,33 +3,28 @@ on:
   push:
     branches: [feat/faster-search]
 jobs:
-  live:
+  prebuilt:
     runs-on: ubuntu-latest
-    steps:
-      - name: Time the live API on companies it has not cached
-        run: |
-          B=https://sec-terminal-api.onrender.com
-          curl -s -w " sec-check %{time_total}s\n" $B/api/sec-check
-          for t in KO V; do
-            for p in company governance pay-efficiency trends; do
-              curl -s -o /dev/null -w "$t $p %{http_code} %{time_total}s\n" --max-time 150 $B/api/$p/$t
-            done
-          done
-  cpu:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        cpus: ['0.1', '1']
     steps:
       - uses: actions/checkout@v4
-      - name: Run the API with Render free's CPU share and time each step
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -q -r api/requirements.txt
+      - name: Build the file
+        working-directory: api
+        run: python prebuild.py | tail -15; ls -la prebuilt.tar.gz; python -c "import json;m=json.load(open('prebuilt/manifest.json'));print(len(m['tickers']),'ok;',len(m['failures']),'with failures:',dict(list(m['failures'].items())[:8]))"
+      - name: Serve it to the API at Render's CPU share and time searches
         run: |
-          docker run -d --name api --memory=512m --cpus=${{ matrix.cpus }} -p 8000:8000 -v $PWD/api:/app -w /app python:3.13-slim \
+          (cd api && python -m http.server 9000 >/dev/null 2>&1 &)
+          docker run -d --name api --memory=512m --cpus=0.1 -p 8000:8000 -e PREBUILT_URL=http://172.17.0.1:9000/prebuilt.tar.gz -v $PWD/api:/app -w /app python:3.13-slim \
             sh -c "pip install -q -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
           for i in $(seq 1 300); do curl -sf localhost:8000/health >/dev/null && break; sleep 2; done
-          for t in AAPL JPM; do
+          for i in $(seq 1 60); do curl -s localhost:8000/api/prebuilt-status | grep -q '"loaded_at":"' && break; sleep 2; done
+          curl -s localhost:8000/api/prebuilt-status; echo
+          for t in AAPL JPM NFLX BRK-B RIVN; do
             for p in company governance pay-efficiency trends; do
-              curl -s -o /dev/null -w "cpus=${{ matrix.cpus }} $t $p %{http_code} %{time_total}s\n" --max-time 300 localhost:8000/api/$p/$t
+              curl -s -o /dev/null -w "$t $p %{http_code} %{time_total}s\n" --max-time 300 localhost:8000/api/$p/$t
             done
           done
-          docker logs api 2>&1 | grep -E "done in|failed|timed out" | tail -20
+          docker exec api grep '^anon ' /sys/fs/cgroup/memory.stat
+          docker logs api 2>&1 | grep -E "prebuilt|failed|done in" | tail -12

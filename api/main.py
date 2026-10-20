@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 import export
+import prebuilt
 import sec_core
 
 app = FastAPI(title="SEC Financial & Corporate Governance Terminal API")
@@ -109,25 +110,33 @@ def isolated(fn, ticker):
     return payload
 
 
+def _lookup(kind, step, fn, ticker):
+    """The ready-made result when there is one (S&P 500 companies, see prebuilt.py), otherwise a live read."""
+    ready = prebuilt.get(kind, ticker)
+    if ready is not None:
+        return ready
+    return _timed(step, ticker, lambda t: isolated(fn, t))
+
+
 # The 10-K and the proxy are separate requests, so ratios show up without waiting for the (slower) proxy
 @lru_cache(maxsize=64)
 def cached_financials(ticker):
-    return _timed("10-K", ticker, lambda t: isolated(sec_core.get_financial_report, t))
+    return _lookup("company", "10-K", sec_core.get_financial_report, ticker)
 
 
 @lru_cache(maxsize=64)
 def cached_governance(ticker):
-    return _timed("DEF 14A", ticker, lambda t: isolated(sec_core.get_governance_report, t))
+    return _lookup("governance", "DEF 14A", sec_core.get_governance_report, ticker)
 
 
 @lru_cache(maxsize=64)
 def cached_pay_efficiency(ticker):
-    return _timed("Pay Efficiency", ticker, lambda t: isolated(sec_core.get_pay_efficiency, t))
+    return _lookup("pay_efficiency", "Pay Efficiency", sec_core.get_pay_efficiency, ticker)
 
 
 @lru_cache(maxsize=64)
 def cached_trends(ticker):
-    return _timed("Trends", ticker, lambda t: isolated(sec_core.get_trends, t))
+    return _lookup("trends", "Trends", sec_core.get_trends, ticker)
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
@@ -151,9 +160,19 @@ def lookup(fn, ticker):
         raise HTTPException(502, f"Couldn't fetch SEC data for {ticker}: {e}")
 
 
+@app.on_event("startup")
+def load_prebuilt():
+    prebuilt.start(on_refresh=lambda: [f.cache_clear() for f in (cached_financials, cached_governance, cached_pay_efficiency, cached_trends)])
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/prebuilt-status")
+def prebuilt_status():
+    return prebuilt.status()
 
 
 @app.get("/api/sec-check")
