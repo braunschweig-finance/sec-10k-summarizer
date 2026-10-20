@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion, type Variants } from "motion/react";
-import type { PayEfficiency, Report, Statement } from "@/lib/types";
+import type { Benchmark, GovernanceMetrics, PayEfficiency, Report, Statement } from "@/lib/types";
 import { API_URL, downloadDocx, fetchMemo, saveBlob } from "@/lib/api";
 import { CountUp, onSpotlightMove } from "./fx";
 import { PeerRank } from "./features";
+import { BenchLine } from "./bench";
 
 const fmtM = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -65,12 +66,22 @@ export function RatiosPanel({ report }: { report: Report }) {
                 </div>
               )}
               <p className="text-sm leading-relaxed text-muted">{math?.blurb}</p>
+              <BenchLine bench={report.benchmark} metric={name} value={value} />
             </motion.div>
           );
         })}
       </motion.div>
 
-      <PayEfficiencyCard pe={report.payEfficiency} error={report.payEfficiencyError} />
+      {report.benchmark && (
+        <p className="-mt-4 text-xs text-muted">
+          Medians: {report.benchmark.is_sector ? `${report.benchmark.group} companies in the Russell 1000` : "all Russell 1000 companies"}, each from its
+          own latest 10-K. Sector comes from SEC&apos;s industry code for the company
+          {report.benchmark.sic ? ` (SIC ${report.benchmark.sic}${report.industry ? `, ${report.industry}` : ""})` : ""}, so it can differ from
+          other classifications. {report.benchmark.note}
+        </p>
+      )}
+
+      <PayEfficiencyCard pe={report.payEfficiency} error={report.payEfficiencyError} bench={report.benchmark} />
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -128,7 +139,7 @@ function SourceLine({ label, value, concept, href, linkText }: { label: string; 
 }
 
 // The project's own metric: how much of a year's operating income went to the CEO, by the SEC's "actually paid" measure
-function PayEfficiencyCard({ pe, error }: { pe: PayEfficiency | null; error?: string }) {
+function PayEfficiencyCard({ pe, error, bench }: { pe: PayEfficiency | null; error?: string; bench?: Benchmark | null }) {
   if (error) return <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">Pay Efficiency: {error}</p>;
   if (!pe)
     return (
@@ -201,6 +212,7 @@ function PayEfficiencyCard({ pe, error }: { pe: PayEfficiency | null; error?: st
         {fmtPay(pe.ceo_pay_m)} ÷ {pe.op_income_m === null ? "?" : `${fmtM(pe.op_income_m)}M`} = {pe.value}
         {pe.sct_total_m !== null && <> · Summary Compensation Table total: {fmtPay(pe.sct_total_m)}</>}
       </div>
+      <BenchLine bench={bench} metric="Pay Efficiency" value={pe.value} lowerIsBetter />
       <PeerRank pe={pe} />
       {pe.flags.length > 0 && (
         <ul className="flex flex-col gap-1 text-xs text-brass">
@@ -344,6 +356,7 @@ export function GovernancePanel({ report }: { report: Report }) {
         <span className="tnum font-mono text-paper">{g.proxy_chars.toLocaleString("en-US")}</span> characters read from {g.proxy_source}. Each tile
         says whether the proxy discusses the topic; the quote underneath is the proof.
       </p>
+      {g.metrics && <GovernanceNumbers m={g.metrics} bench={report.benchmark} proxyUrl={g.proxy_url} />}
       <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-4 sm:grid-cols-2">
         {Object.entries(g.checks).map(([check, evidence]) => {
           const found = evidence !== null;
@@ -409,6 +422,67 @@ export function GovernancePanel({ report }: { report: Report }) {
         </div>
       )}
       {report.sample && <p className="text-sm text-muted">The four proxy passages (board leadership, pay, voting items, clawback and risk) also load once the API is online.</p>}
+    </div>
+  );
+}
+
+/** CEO pay ratio, board independence and say-on-pay support, each with the proxy sentence it came from. */
+function GovernanceNumbers({ m, bench, proxyUrl }: { m: GovernanceMetrics; bench?: Benchmark | null; proxyUrl: string }) {
+  const ratio = m["CEO Pay Ratio"];
+  const board = m["Board Independence"];
+  const sop = m["Say-on-Pay Support"];
+  const cards = [
+    {
+      name: "CEO Pay Ratio",
+      value: ratio ? `${ratio.value.toLocaleString("en-US")} : 1` : "Not found",
+      sub: "CEO's total pay to the median employee's",
+      evidence: ratio?.evidence,
+    },
+    {
+      name: "Board Independence",
+      value: board ? (board.total ? `${board.independent} of ${board.total}` : board.pct !== null ? `${board.pct.toFixed(0)}%` : `All but ${board.except ? board.except.split(/,|\band\b/).filter((x) => x.trim()).length : 1}`) : "Not found",
+      sub: board?.total && board.pct !== null
+        ? `${board.pct.toFixed(0)}% of directors are independent`
+        : board?.except
+          ? `Every director except ${board.except} is independent`
+          : "Share of directors who are independent",
+      evidence: board?.evidence,
+      compare: board?.pct != null ? `${board.pct}%` : "N/A",
+    },
+    {
+      name: "Say-on-Pay Support",
+      value: sop ? `${sop.approximate ? "≈" : ""}${sop.pct}%` : "Not found",
+      sub: sop?.meeting_year ? `Share of votes for executive pay (${sop.meeting_year} vote)` : "Share of votes for executive pay in the latest vote the proxy reports",
+      evidence: sop?.evidence,
+    },
+  ];
+  return (
+    <div className="flex flex-col gap-3">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-4 md:grid-cols-3">
+        {cards.map((c) => (
+          <motion.div key={c.name} variants={rise} onMouseMove={onSpotlightMove} className="spotlight flex flex-col gap-2 rounded-2xl border border-line bg-panel p-5">
+            <span className="eyebrow">{c.name}</span>
+            <span className={`tnum font-display text-4xl font-bold ${c.evidence ? "text-brass" : "text-muted"}`}>{c.value}</span>
+            <span className="text-sm text-muted">{c.sub}</span>
+            <BenchLine bench={bench} metric={c.name} value={"compare" in c ? c.compare! : c.evidence ? c.value : "N/A"} />
+            {c.evidence ? (
+              <details className="text-xs leading-relaxed text-muted">
+                <summary className="cursor-pointer text-teal">Quote from the proxy</summary>
+                <p className="mt-2">&ldquo;{c.evidence}&rdquo;</p>
+              </details>
+            ) : (
+              <p className="text-xs text-muted">No sentence stating this number was found in the proxy text; check the filing directly.</p>
+            )}
+          </motion.div>
+        ))}
+      </motion.div>
+      <p className="text-xs text-muted">
+        Read from sentences in the{" "}
+        <a href={proxyUrl} target="_blank" rel="noreferrer" className="text-teal hover:underline">
+          proxy statement ↗
+        </a>
+        . These aren&apos;t tagged in XBRL, so each number is only taken from a sentence that states it plainly, and that sentence is quoted.
+      </p>
     </div>
   );
 }

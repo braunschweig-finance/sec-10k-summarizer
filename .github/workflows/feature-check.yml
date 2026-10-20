@@ -1,0 +1,57 @@
+# Live checks of the lookup code against SEC EDGAR, on GitHub's machines (they can reach SEC; Claude's sandbox can't).
+# Runs on pull requests that touch the API, and on demand from Actions > Live feature check > Run workflow.
+# It changes nothing on the live site.
+name: Live feature check
+
+on:
+  pull_request:
+    paths: ["api/**", ".github/workflows/feature-check.yml"]
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers to check (blank = the default list)"
+        required: false
+      full_prebuild:
+        description: "Also run the full Russell 1000 prebuild as a dry run (nothing is published)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    if: ${{ !inputs.full_prebuild }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -q -r api/requirements.txt pytest
+      - name: Unit tests
+        working-directory: api
+        run: python -m pytest tests -q
+      - name: Live check against SEC EDGAR
+        working-directory: api
+        run: python tests/live_check.py ${{ inputs.tickers }}
+
+  dry-run-prebuild:
+    if: ${{ inputs.full_prebuild }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -q -r api/requirements.txt
+      - name: Refresh the Russell 1000 list
+        working-directory: api
+        run: python update_russell.py
+      - name: Full prebuild (not published)
+        working-directory: api
+        run: |
+          python prebuild.py > prebuild.log 2>&1 || (tail -50 prebuild.log; exit 1)
+          grep -v ": 5/5$" prebuild.log | grep -v "^\[" | tail -150
+          ls -la prebuilt.tar.gz
+          python -c "import json; b=json.load(open('prebuilt/benchmarks.json')); print(json.dumps({k: {'companies': v['companies'], **{m: s and round(s['median'], 2) for m, s in v['metrics'].items()}} for k, v in {**b['sectors'], 'ALL': b['all']}.items()}, indent=1))"

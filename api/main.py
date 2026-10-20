@@ -18,9 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+import benchmarks
 import export
 import prebuilt
 import sec_core
+from sec_core import DataUnavailable
 
 app = FastAPI(title="SEC Financial & Corporate Governance Terminal API")
 
@@ -80,6 +82,8 @@ def _child(fn, ticker, conn):
         pass
     try:
         conn.send(("ok", fn(ticker)))
+    except DataUnavailable as e:
+        conn.send(("unavailable", str(e)))
     except Exception as e:
         conn.send(("error", str(e) or repr(e)))
     finally:
@@ -105,15 +109,19 @@ def isolated(fn, ticker):
         finally:
             recv.close()
         proc.join()
+    if status == "unavailable":
+        raise DataUnavailable(payload)
     if status == "error":
         raise RuntimeError(payload)
     return payload
 
 
 def _lookup(kind, step, fn, ticker):
-    """The ready-made result when there is one (S&P 500 companies, see prebuilt.py), otherwise a live read."""
+    """The ready-made result when there is one (Russell 1000 and S&P 500 companies, see prebuilt.py), otherwise a live read."""
     ready = prebuilt.get(kind, ticker)
     if ready is not None:
+        if "__unavailable__" in ready:
+            raise DataUnavailable(ready["__unavailable__"])
         return ready
     return _timed(step, ticker, lambda t: isolated(fn, t))
 
@@ -139,6 +147,14 @@ def cached_trends(ticker):
     return _lookup("trends", "Trends", sec_core.get_trends, ticker)
 
 
+@lru_cache(maxsize=64)
+def cached_risks(ticker):
+    return _lookup("risks", "Risk factors", sec_core.get_risk_summary, ticker)
+
+
+CACHES = (cached_financials, cached_governance, cached_pay_efficiency, cached_trends, cached_risks)
+
+
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
 _pool = ThreadPoolExecutor(max_workers=4)
 SEC_TIMEOUT = int(os.environ.get("SEC_TIMEOUT_SECONDS", "90"))
@@ -152,17 +168,21 @@ def lookup(fn, ticker):
         raise HTTPException(400, "That doesn't look like a ticker symbol.")
     try:
         return _pool.submit(fn, ticker).result(timeout=SEC_TIMEOUT)
+    except DataUnavailable as e:
+        # Not a server problem: SEC simply has no such data for this ticker. Not cached by lru_cache (it raised).
+        print(f"[{ticker}] unavailable: {e}", flush=True)
+        raise HTTPException(422, f"SEC data unavailable for {ticker}: {e}")
     except FutureTimeout:
         print(f"[{ticker}] timed out after {SEC_TIMEOUT}s", flush=True)
         raise HTTPException(504, f"SEC EDGAR took longer than {SEC_TIMEOUT} seconds for {ticker}. It keeps working in the background, so try again in a minute.")
     except Exception as e:
         print(f"[{ticker}] failed: {e!r}", flush=True)
-        raise HTTPException(502, f"Couldn't fetch SEC data for {ticker}: {e}")
+        raise HTTPException(502, f"Couldn't read SEC data for {ticker} ({e}). This is usually temporary, so try again in a minute.")
 
 
 @app.on_event("startup")
 def load_prebuilt():
-    prebuilt.start(on_refresh=lambda: [f.cache_clear() for f in (cached_financials, cached_governance, cached_pay_efficiency, cached_trends)])
+    prebuilt.start(on_refresh=lambda: [f.cache_clear() for f in CACHES])
 
 
 @app.get("/health")
@@ -194,7 +214,9 @@ def sec_check():
 
 @app.get("/api/company/{ticker}")
 def company(ticker: str):
-    return lookup(cached_financials, ticker)
+    report = lookup(cached_financials, ticker)
+    # Sector medians come from the ready-made Russell 1000 results, so they cost nothing to add here
+    return {**report, "benchmark": benchmarks.for_company(report.get("sic"), prebuilt.benchmarks_path())}
 
 
 @app.get("/api/governance/{ticker}")
@@ -210,6 +232,11 @@ def pay_efficiency(ticker: str):
 @app.get("/api/trends/{ticker}")
 def trends(ticker: str):
     return lookup(cached_trends, ticker)
+
+
+@app.get("/api/risks/{ticker}")
+def risks(ticker: str):
+    return lookup(cached_risks, ticker)
 
 
 def full_report(ticker):

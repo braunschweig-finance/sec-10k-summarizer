@@ -339,3 +339,112 @@ export function DotStrip({ values, mark, markLabel, median }: { values: number[]
     </div>
   );
 }
+
+/** Two lines with their own axes (left and right) over the same years, e.g. Pay Efficiency against the share price. */
+export function DualAxisChart({
+  labels,
+  left,
+  right,
+  height = 260,
+  ariaLabel,
+}: {
+  labels: string[];
+  left: LineSeries & { format: (v: number) => string };
+  right: LineSeries & { format: (v: number) => string };
+  height?: number;
+  ariaLabel: string;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [box, W] = useWidth();
+  const pad = { top: 16, right: 64, bottom: 28, left: 64 };
+  const nums = (s: LineSeries) => s.values.filter((v): v is number => v !== null);
+  if (!nums(left).length || !nums(right).length) return <div ref={box} className="text-sm text-muted">Not enough reported data to chart.</div>;
+  const iw = W - pad.left - pad.right;
+  const ih = height - pad.top - pad.bottom;
+  const x = (i: number) => pad.left + (labels.length === 1 ? iw / 2 : (i / (labels.length - 1)) * iw);
+  const scale = (s: LineSeries) => {
+    const lo = niceMin(Math.min(...nums(s)));
+    const hi = niceMax(Math.max(...nums(s)) * 1.1);
+    return { lo, hi, y: (v: number) => pad.top + ih - ((v - lo) / (hi - lo)) * ih };
+  };
+  const L = scale(left);
+  const R = scale(right);
+  const ticks = [0, 1, 2, 3, 4];
+
+  function onMove(e: React.PointerEvent) {
+    const b = svgRef.current?.getBoundingClientRect();
+    if (!b) return;
+    const px = ((e.clientX - b.left) / b.width) * W;
+    let best = 0;
+    labels.forEach((_, i) => Math.abs(x(i) - px) < Math.abs(x(best) - px) && (best = i));
+    setHover(best);
+  }
+
+  const line = (s: LineSeries, y: (v: number) => number, dashed: boolean) => {
+    const pts = s.values.map((v, i) => (v === null ? null : ([x(i), y(v)] as const)));
+    const d = pts.reduce((acc, p, i) => (p ? acc + `${i && pts[i - 1] ? "L" : "M"}${p[0]},${p[1]}` : acc), "");
+    return (
+      <g key={s.name}>
+        <motion.path
+          d={d}
+          fill="none"
+          stroke={s.color}
+          strokeWidth={2}
+          strokeDasharray={dashed ? "6 4" : undefined}
+          strokeLinejoin="round"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+        />
+        {pts.map((p, i) => (p ? <circle key={i} cx={p[0]} cy={p[1]} r={hover === i ? 5 : 4} fill={s.color} stroke="var(--color-panel)" strokeWidth={2} /> : null))}
+      </g>
+    );
+  };
+
+  return (
+    <div ref={box} className="relative">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${height}`}
+        className="w-full touch-none select-none"
+        role="img"
+        aria-label={ariaLabel}
+        onPointerMove={onMove}
+        onPointerDown={onMove}
+        onPointerLeave={() => setHover(null)}
+      >
+        {ticks.map((k) => {
+          const yy = pad.top + ih - (ih * k) / 4;
+          return (
+            <g key={k}>
+              <line x1={pad.left} x2={W - pad.right} y1={yy} y2={yy} stroke="var(--color-line)" strokeDasharray={k === 0 ? undefined : "2 4"} />
+              <text x={pad.left - 8} y={yy} dy="0.32em" textAnchor="end" className="font-mono text-[10px]" fill={left.color}>
+                {left.format(L.lo + ((L.hi - L.lo) * k) / 4)}
+              </text>
+              <text x={W - pad.right + 8} y={yy} dy="0.32em" className="font-mono text-[10px]" fill={right.color}>
+                {right.format(R.lo + ((R.hi - R.lo) * k) / 4)}
+              </text>
+            </g>
+          );
+        })}
+        {labels.map((l, i) => (
+          <text key={l} x={x(i)} y={height - 8} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+            {shortYear(l, iw / labels.length)}
+          </text>
+        ))}
+        {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={pad.top} y2={pad.top + ih} stroke="var(--color-muted)" strokeWidth={1} />}
+        {line(left, L.y, false)}
+        {line(right, R.y, true)}
+      </svg>
+      {hover !== null && (
+        <Tooltip
+          x={(x(hover) / W) * 100}
+          y={50}
+          title={labels[hover]}
+          rows={[left, right].map((s) => ({ color: s.color, name: s.name, value: s.values[hover] === null ? "Not reported" : s.format(s.values[hover]!) }))}
+        />
+      )}
+    </div>
+  );
+}

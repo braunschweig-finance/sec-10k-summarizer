@@ -1,14 +1,16 @@
-# Builds the API's ready-made results for S&P 500 companies on GitHub's machines (much faster than Render's free
-# tenth of a CPU) and publishes them as the "prebuilt-data" release. The API downloads it (see api/prebuilt.py).
-# Runs weekly, whenever the lookup code changes on main, and on demand from Actions > Prebuild S&P 500 data.
-name: Prebuild S&P 500 data
+# Builds the API's ready-made results for Russell 1000 and S&P 500 companies on GitHub's machines (much faster than
+# Render's free tenth of a CPU), plus the sector medians, and publishes them as the "prebuilt-data" release. The API
+# downloads it (see api/prebuilt.py). Runs weekly, whenever the lookup code changes on main, and on demand from
+# Actions > Prebuild company data.
+name: Prebuild company data
 
 on:
   schedule:
     - cron: "17 6 * * 1"
   push:
     branches: [main]
-    paths: ["api/sec_core.py", "api/peers.py", "api/prebuild.py", "api/data/**", "api/requirements.txt"]
+    paths: ["api/sec_core.py", "api/peers.py", "api/prebuild.py", "api/benchmarks.py", "api/governance_metrics.py",
+            "api/risk_factors.py", "api/prices.py", "api/sectors.py", "api/update_russell.py", "api/data/**", "api/requirements.txt"]
   workflow_dispatch:
 
 permissions:
@@ -17,13 +19,16 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - run: pip install -q -r api/requirements.txt
-      - name: Run the four lookups for every company
+      - name: Refresh the Russell 1000 list (keeps the committed one if Wikipedia can't be read)
+        working-directory: api
+        run: python update_russell.py
+      - name: Run the five lookups for every company
         working-directory: api
         run: python prebuild.py
       - name: Publish as the prebuilt-data release
@@ -31,6 +36,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view prebuilt-data >/dev/null 2>&1 || \
-            gh release create prebuilt-data --title "Prebuilt S&P 500 data" --latest=false \
-              --notes "Ready-made API results, rebuilt weekly by the Prebuild S&P 500 data workflow. Not a software release."
+            gh release create prebuilt-data --title "Prebuilt company data" --latest=false \
+              --notes "Ready-made API results, rebuilt weekly by the Prebuild company data workflow. Not a software release."
           gh release upload prebuilt-data api/prebuilt.tar.gz --clobber
