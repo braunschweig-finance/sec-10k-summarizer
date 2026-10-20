@@ -34,7 +34,8 @@ def fetch():
                 if tk and tk != "NAN":
                     rows.append({"ticker": tk, "company": str(r[name]).strip() if name is not None else "", "sector": str(r[sector]).strip()})
             return rows
-    raise RuntimeError("no Russell 1000 components table with a sector column on the page")
+    shapes = [(t.shape, [str(c) for c in t.columns][:6]) for t in pd.read_html(io.StringIO(r.text))]
+    raise RuntimeError(f"no Russell 1000 components table with a sector column on the page; tables: {shapes}")
 
 
 def main():
