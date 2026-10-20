@@ -1,0 +1,25 @@
+name: Live site check (temporary)
+on:
+  push:
+    branches: [tmp/live-site-check]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for p in api/company/AAPL api/company/CAT api/company/DKS api/risks/MSFT api/risks/CAT api/governance/NVDA api/trends/CAT api/company/ZZZZQ api/company/TSM; do
+            curl -s -m 120 -o r.json -w "$p %{http_code} %{time_total}s\n" https://sec-terminal-api.onrender.com/$p
+            python3 - <<'PY'
+          import json
+          try: d=json.load(open("r.json"))
+          except Exception as e: print("  not json", open("r.json").read()[:200]); raise SystemExit
+          if "detail" in d: print("  detail:", d["detail"])
+          b=d.get("benchmark") or {}
+          if b: print("  benchmark:", b.get("group"), b.get("companies"), {k:(v or {}).get("median") for k,v in b.get("metrics",{}).items()})
+          if "risks" in d: print("  risks:", d.get("available"), d.get("count"), d.get("changes"), (d.get("risks") or [{}])[0].get("title","")[:100])
+          m=d.get("metrics")
+          if m: print("  metrics:", {k:(v or {}).get("value", (v or {}).get("pct")) for k,v in m.items()})
+          if "prices" in d: print("  prices:", d["prices"].get("available"), [(y["date"], y["close"]) for y in d["prices"].get("years",[])][-2:])
+          if "name" in d: print("  name:", d["name"], "sic", d.get("sic"), d.get("industry"))
+          PY
+          done
