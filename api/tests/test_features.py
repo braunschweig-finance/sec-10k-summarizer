@@ -275,6 +275,15 @@ def _bundle(tmp_path, files):
     return buf.getvalue()
 
 
+def fake_stream(blob):
+    """Stands in for httpx.stream: a context manager whose response yields the blob."""
+    from contextlib import contextmanager
+    @contextmanager
+    def stream(*a, **k):
+        yield SimpleNamespace(raise_for_status=lambda: None, iter_bytes=lambda n: iter([blob[:10], blob[10:]]))
+    return stream
+
+
 def test_prebuilt_results_are_served_without_reading_sec(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from fastapi.testclient import TestClient
@@ -283,7 +292,7 @@ def test_prebuilt_results_are_served_without_reading_sec(tmp_path, monkeypatch):
     blob = _bundle(tmp_path, {"manifest.json": {"built_at": "2026-10-20T06:00:00Z", "tickers": ["AAPL"]},
                               "AAPL/company.json": ready})
     monkeypatch.setattr(prebuilt, "DIR", str(tmp_path / "prebuilt"))
-    monkeypatch.setattr(prebuilt.httpx, "get", lambda *a, **k: SimpleNamespace(content=blob, raise_for_status=lambda: None))
+    monkeypatch.setattr(prebuilt.httpx, "stream", fake_stream(blob))
     cleared = []
     monkeypatch.setattr(prebuilt, "_on_refresh", [lambda: cleared.append(True)])
     assert prebuilt.refresh() and cleared
@@ -293,7 +302,8 @@ def test_prebuilt_results_are_served_without_reading_sec(tmp_path, monkeypatch):
         raise AssertionError("read SEC for a prebuilt company")
     monkeypatch.setattr(main.sec_core, "get_financial_report", no_sec)
     main.cached_financials.cache_clear()
-    assert TestClient(main.app).get("/api/company/aapl").json() == ready
+    body = TestClient(main.app).get("/api/company/aapl").json()
+    assert body.pop("benchmark") is None and body == ready     # no benchmarks.json in this bundle
     # Anything not in the file is still read live
     assert prebuilt.get("governance", "AAPL") is None and prebuilt.get("company", "ZZZZ") is None
     main.cached_financials.cache_clear()
@@ -304,7 +314,7 @@ def test_prebuilt_download_failure_keeps_current_files(tmp_path, monkeypatch):
     monkeypatch.setattr(prebuilt, "DIR", str(tmp_path / "prebuilt"))
     def boom(*a, **k):
         raise OSError("network down")
-    monkeypatch.setattr(prebuilt.httpx, "get", boom)
+    monkeypatch.setattr(prebuilt.httpx, "stream", boom)
     assert prebuilt.refresh() is False
     assert "network down" in prebuilt.status()["error"]
 

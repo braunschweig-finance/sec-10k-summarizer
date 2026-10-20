@@ -16,13 +16,43 @@ from collections import OrderedDict
 import httpx
 import pandas as pd
 from docx import Document
-from edgar import Company, set_identity
+from edgar import Company as _EdgarCompany, set_identity
 
+import governance_metrics
 import peers
+import prices
+import risk_factors
 
 # SEC Compliance Identity
 SEC_IDENTITY = "Jacob Braunschweig jacob.braunschweig@gmail.com"
 set_identity(SEC_IDENTITY)
+
+
+class DataUnavailable(Exception):
+    """SEC has no usable data of this kind for the ticker (not a server problem). The message says why, for the page."""
+
+
+def Company(ticker_symbol):
+    """edgartools' Company, with a plain message when SEC has no company under that ticker."""
+    try:
+        return _EdgarCompany(ticker_symbol)
+    except Exception as e:
+        if type(e).__name__ == "CompanyNotFoundError":
+            raise DataUnavailable(f"SEC EDGAR has no company with the ticker {ticker_symbol}. Check the spelling, "
+                                  "or try the company's main share class (for example BRK-B).") from None
+        raise
+
+
+NO_10K = ("{name} doesn't file 10-K annual reports with the SEC, so there are no audited 10-K statements to read. "
+          "Foreign companies file a 20-F or 40-F instead, and funds and ETFs file N-CSR reports.")
+
+
+def annual_reports(company):
+    """The company's original 10-Ks (amendments left out), newest first. Raises DataUnavailable if it has none."""
+    found = [f for f in (latest_filings(company, "10-K") or []) if f.form == "10-K"]
+    if not found:
+        raise DataUnavailable(NO_10K.format(name=company.name))
+    return found
 
 def is_date_or_period_column(col_name):
     """Detects whether a column represents an audited fiscal reporting period."""
@@ -435,19 +465,23 @@ def section_passage(text_body):
 def get_financial_report(ticker_symbol):
     """The 10-K half of the page: statements, ratios and their source line items. Same steps as get_sec_data in app.py."""
     company = Company(ticker_symbol)
+    tenk_filings = annual_reports(company)
 
     financials = company.get_financials()
+    if financials is None:
+        raise DataUnavailable(f"{company.name}'s latest 10-K has no XBRL financial statements that SEC EDGAR can read.")
     print(f"[{ticker_symbol}] 10-K financials loaded", flush=True)
     disp_income, raw_income = statement_frames(financials.income_statement() if financials else None)
     disp_balance, raw_balance = statement_frames(financials.balance_sheet() if financials else None)
     disp_cashflow, _ = statement_frames(financials.cash_flow_statement() if financials else None)
 
     ratios, inputs = compute_ratios(raw_income, raw_balance)
-    tenk_filings = latest_filings(company, "10-K")
 
     return {
         "ticker": ticker_symbol,
         "name": company.name,
+        "sic": str(getattr(company, "sic", "") or ""),
+        "industry": str(getattr(company, "industry", "") or ""),
         "tenk_url": tenk_filings[0].url if tenk_filings else "",
         "statements": {
             "income": statement_json(clean_statement_df(disp_income)),
@@ -469,7 +503,7 @@ def get_governance_report(ticker_symbol):
     company = Company(ticker_symbol)
     proxy_filings = latest_filings(company, "DEF 14A")
 
-    governance = {"checks": {}, "sections": {}, "proxy_url": "", "proxy_date": "", "proxy_chars": 0, "proxy_source": ""}
+    governance = {"checks": {}, "sections": {}, "metrics": {}, "proxy_url": "", "proxy_date": "", "proxy_chars": 0, "proxy_source": ""}
     if proxy_filings:
         latest_proxy = proxy_filings[0]
         proxy_raw, proxy_source = get_proxy_text(latest_proxy)
@@ -479,6 +513,7 @@ def get_governance_report(ticker_symbol):
                           proxy_chars=len(proxy_raw), proxy_source=proxy_source)
         for check, patterns in GOVERNANCE_CHECKS.items():
             governance["checks"][check] = find_evidence(proxy_flat, patterns)
+        governance["metrics"] = governance_metrics.extract(proxy_flat)
 
         # Prefer matches after the first 15,000 characters to bypass the table of contents and cover page
         proxy_lower = proxy_flat.lower()
@@ -567,6 +602,11 @@ def pvp_from_xml(xml_bytes):
             if date.fromisoformat(fy) >= date.fromisoformat(end) or days_apart(fy, end) <= 10:
                 return fy
         return None
+
+    # Cumulative total shareholder return (value of $100 invested), the company's own and its peer group's
+    for name, end, members, val in facts:
+        if name in ("TotalShareholderRtnAmt", "PeerGroupTotalShareholderRtnAmt") and not members and end in out:
+            out[end]["tsr" if name == "TotalShareholderRtnAmt" else "peer_tsr"] = val
 
     for tag, col in PVP_TAGS.items():
         per_ceo = {}  # (fy, individual) -> value
@@ -657,7 +697,7 @@ def get_pay_efficiency(ticker_symbol):
     }
 
 
-HISTORY_KEYS = ["fy_end", "value", "pct", "ceo_pay_m", "op_income_m", "op_concept", "denominator", "tenk_accn"]
+HISTORY_KEYS = ["fy_end", "value", "pct", "ceo_pay_m", "op_income_m", "op_concept", "denominator", "tenk_accn", "tsr", "peer_tsr"]
 
 
 def pay_efficiency_year(gaap, cik, fy_end, v):
@@ -694,6 +734,8 @@ def pay_efficiency_year(gaap, cik, fy_end, v):
         "tenk_accn": op_accn or "",
         "tenk_url": filing_folder(cik, op_accn),
         "flags": flags,
+        "tsr": v.get("tsr"),
+        "peer_tsr": v.get("peer_tsr"),
     }
 
 
@@ -807,4 +849,83 @@ def get_trends(ticker_symbol):
     gaap = companyfacts(cik)
     ends = fiscal_year_ends(gaap, TREND_TAGS["Revenue"] + TREND_TAGS["Net Income"])[-TREND_YEARS:]
     print(f"[{ticker_symbol}] trends: {len(ends)} fiscal years", flush=True)
-    return {"ticker": ticker_symbol, "years": [trend_year(gaap, cik, e) for e in ends]}
+    return {"ticker": ticker_symbol, "years": [trend_year(gaap, cik, e) for e in ends], "prices": prices.year_end_closes(ticker_symbol, ends)}
+
+
+# ---------- Plain-English 10-K summary: risk factor headings and what changed (see risk_factors.py) ----------
+
+def primary_doc_url(filing):
+    return f"https://www.sec.gov/Archives/edgar/data/{int(filing.cik)}/{filing.accession_no.replace('-', '')}/{filing.primary_document}"
+
+
+def risk_headings(filing):
+    """Item 1A headings of one 10-K, or None if its Item 1A can't be found or has no readable headings."""
+    html = sec_fetch(primary_doc_url(filing)).decode("utf-8", errors="ignore")
+    fragment = risk_factors.item_1a_html(html)
+    del html
+    if not fragment:
+        return None
+    found = risk_factors.headings(fragment)
+    return found if len(found["risks"]) >= 3 else None
+
+
+def get_risk_summary(ticker_symbol):
+    """The latest 10-K's risk factor headings, each marked new, reworded or unchanged against the prior 10-K."""
+    company = Company(ticker_symbol)
+    tenks = annual_reports(company)
+    if len(tenks) < 2:
+        # The first page of filings didn't reach back to last year's 10-K
+        tenks = [f for f in company.get_filings(form="10-K") if f.form == "10-K"] or tenks
+    latest = tenks[0]
+    current = risk_headings(latest)
+    print(f"[{ticker_symbol}] risk factors read ({len(current['risks']) if current else 0} headings)", flush=True)
+    base = {"tenk_url": latest.url, "tenk_date": str(latest.filing_date), "period": str(getattr(latest, "period_of_report", "") or "")}
+    if not current:
+        return {"available": False, **base,
+                "reason": "The latest 10-K's Item 1A has no risk factor headings this page can read. Some companies, often banks, "
+                          "put their risk factors in another section or exhibit of the report."}
+    prior_filing = tenks[1] if len(tenks) > 1 else None
+    prior = risk_headings(prior_filing) if prior_filing else None
+
+    risks = [dict(r) for r in current["risks"]]
+    removed = []
+    if prior:
+        status, removed = risk_factors.compare(current["risks"], prior["risks"])
+        for r, (st, j, score) in zip(risks, status):
+            r["status"] = st
+            if st == "reworded":
+                r["prior_title"] = prior["risks"][j]["title"]
+    counts = {k: sum(1 for r in risks if r.get("status") == k) for k in ("new", "reworded", "unchanged")}
+    return {
+        "available": True,
+        **base,
+        "count": len(risks),
+        "words": current["words"],
+        "categories": current["categories"],
+        "risks": risks,
+        "prior": {"tenk_url": prior_filing.url, "tenk_date": str(prior_filing.filing_date),
+                  "period": str(getattr(prior_filing, "period_of_report", "") or ""),
+                  "count": len(prior["risks"]), "words": prior["words"]} if prior else None,
+        "removed": removed,
+        "changes": counts if prior else None,
+    }
+
+
+# ---------- Ratio values as numbers, for sector medians (same rules as compute_ratios) ----------
+
+def ratio_values(inputs):
+    """{"Gross Margin": 33.8, ...} from a company report's inputs ($ millions); None where compute_ratios shows N/A."""
+    def v(name):
+        hit = inputs.get(name)
+        return hit["value_m"] if hit else None
+
+    def div(num, den, scale=1):
+        return num / den * scale if num is not None and den is not None and den > 0 else None
+
+    equity = v("Shareholders' Equity")
+    return {
+        "Gross Margin": div(v("Gross Profit"), v("Revenue"), 100),
+        "Operating Margin": div(v("Operating Income"), v("Revenue"), 100),
+        "Current Ratio": div(v("Current Assets"), v("Current Liabilities")),
+        "Total Liabilities-to-Equity": None if equity is not None and equity < 0 else div(v("Total Liabilities"), equity),
+    }

@@ -7,6 +7,10 @@ on:
     branches-ignore: [main]
     paths: ["api/**", ".github/workflows/feature-check.yml"]
   workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers to check (blank = the default list)"
+        required: false
 
 permissions:
   contents: write
@@ -20,9 +24,12 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
       - run: pip install -q -r api/requirements.txt pytest
-      - name: Probe
+      - name: Unit tests
         working-directory: api
-        run: python tests/probe.py
+        run: python -m pytest tests -q
+      - name: Live check against SEC EDGAR
+        working-directory: api
+        run: python tests/live_check.py ${{ inputs.tickers }}
       - name: Refresh the Russell 1000 list and commit it to this branch
         working-directory: api
         run: |
