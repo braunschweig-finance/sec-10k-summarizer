@@ -5,6 +5,7 @@ memory of each lookup (the API server has 512 MB), and cross-checks Yahoo's year
 
 Run from api/:  python tests/live_check.py [TICKER ...]
 """
+import datetime
 import json
 import os
 import sys
@@ -140,7 +141,9 @@ def main():
         if p and p.get("available"):
             days = [y["date"] for y in p["years"] if y["date"]]
             try:
-                nq = nasdaq_closes(t, min(days), max(days))
+                # Start a week early: Nasdaq leaves out the first day of the range
+                first = (datetime.date.fromisoformat(min(days)) - datetime.timedelta(days=7)).isoformat()
+                nq = nasdaq_closes(t, first, max(days))
             except Exception as e:
                 nq, err = {}, repr(e)[:120]
                 print("   nasdaq failed:", err)

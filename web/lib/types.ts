@@ -5,7 +5,7 @@ export type SourceInput = { value_m: number; label: string; concept: string; per
 // Numbers read from a sentence in the proxy; the sentence is kept as evidence
 export type GovernanceMetrics = {
   "CEO Pay Ratio": { value: number; text: string; evidence: string } | null;
-  "Board Independence": { independent: number | null; total: number | null; pct: number; evidence: string } | null;
+  "Board Independence": { independent: number | null; total: number | null; pct: number | null; except?: string; evidence: string } | null;
   "Say-on-Pay Support": { pct: number; approximate: boolean; meeting_year: number | null; evidence: string } | null;
 };
 

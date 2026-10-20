@@ -8,6 +8,7 @@ Run from the api/ folder:  python update_russell.py
 """
 import csv
 import os
+import re
 
 import httpx
 
@@ -45,7 +46,7 @@ def main():
     by_ticker = {v["ticker"].upper(): v for v in sec.values()}
     kept, seen_cik, unmatched = [], set(), []
     for ticker, name, value in sorted(holdings, key=lambda h: -h[2]):
-        t = ticker.replace(".", "-").replace("/", "-")
+        t = re.sub(r"[./ ]+", "-", ticker)
         hit = by_ticker.get(t) or by_ticker.get(t.replace("-", ""))
         if not hit:
             unmatched.append(ticker)

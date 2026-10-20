@@ -17,19 +17,38 @@ def _num(s):
     return WORDS[s] if s in WORDS else int(s)
 
 
+ABBREV = re.compile(r"\b(?:Mr|Mrs|Ms|Mmes|Messrs|Dr|Drs|Jr|Sr|Inc|Corp|Co|Ltd|No|St|U\.S)\.$")
+
+
 def sentences(text):
     """Splits flat proxy text into sentences, keeping the character offset of each."""
     out, start = [], 0
     for m in re.finditer(r"(?<=[.;!?])\s+(?=[A-Z(\"'])", text):
+        # "Mr. Decker" and "Pfizer Inc. and" don't end a sentence
+        if ABBREV.search(text, max(0, m.start() - 8), m.start()):
+            continue
         out.append((start, text[start:m.start()]))
         start = m.end()
     out.append((start, text[start:]))
     return out
 
 
-def _quote(s, limit=500):
-    s = s.strip()
-    return s if len(s) <= limit else s[:limit].rsplit(" ", 1)[0] + " …"
+def _quote(s, limit=500, at=None):
+    """The sentence, cut to about `limit` characters. When `at` (a character offset in s) is given, the cut keeps
+    the text around that point so the number being quoted is always visible."""
+    s = s.strip() if at is None else s
+    if len(s) <= limit:
+        return s.strip()
+    if at is None or at < limit * 0.6:
+        return s[:limit].rsplit(" ", 1)[0] + " …"
+    lo = max(0, at - int(limit * 0.6))
+    hi = min(len(s), lo + limit)
+    piece = s[lo:hi]
+    if lo > 0:
+        piece = "… " + piece.split(" ", 1)[-1]
+    if hi < len(s):
+        piece = piece.rsplit(" ", 1)[0] + " …"
+    return piece.strip()
 
 
 # ---------- CEO pay ratio (Item 402(u) of Regulation S-K) ----------
@@ -56,7 +75,8 @@ def pay_ratio(text):
             value = float(m.group(1).replace(",", "") + ("." + m.group(2) if m.group(2) else ""))
             if 1 <= value <= 20000:
                 evidence = s if "median" in low else f"{prev_sentence} {s}"
-                return {"value": value, "text": f"{m.group(0).strip()}", "evidence": _quote(evidence, 700)}
+                return {"value": value, "text": f"{m.group(0).strip()}",
+                        "evidence": _quote(evidence, 700, at=m.start() + len(evidence) - len(s))}
     return None
 
 
@@ -75,10 +95,19 @@ INDEP_SLASH = re.compile(r"(?<![\d/])(\d{1,2})\s?/\s?(\d{1,2})(?![\d/])\s+(?:of\
                          re.IGNORECASE)
 INDEP_BARE = re.compile(NUM + r"\s+of\s+" + NUM + r"\s+(?:director\s+nominees|directors|nominees)\s+(?:are\s+)?independent", re.IGNORECASE)
 INDEP_ALL_BUT = re.compile(
-    r"all\s+(?:of\s+)?(?:our|the|\w+'s)\s+(?:director\s+nominees|directors|nominees)[^.;]{0,30}?(?:other\s+than|except(?:\s+for)?)\s+([^.;]{3,80}?),?\s+"
+    r"all\s+(?:of\s+)?(?:(?:our|the|\w+'s)\s+)?(?:director\s+nominees|directors|nominees)[^.;]{0,30}?(?:other\s+than|except(?:\s+for)?)\s+([^.;]{3,80}?),?\s+"
     r"(?:are|is|have\s+been\s+determined\s+to\s+be)\s+independent", re.IGNORECASE)
+# "All director nominees are independent, except Mr. Decker"
+INDEP_ALL_EXCEPT = re.compile(
+    r"all\s+(?:of\s+)?(?:(?:our|the)\s+)?(?:director\s+nominees|directors|nominees)\s+are\s+independent,?\s+(?:other\s+than|except(?:\s+for)?)\s+((?:(?:Mr|Ms|Mrs|Dr)\.\s+)?[^.;,]{3,60}?)(?=[.;,)]|$)",
+    re.IGNORECASE)
 INDEP_PCT = re.compile(r"(\d{2,3})\s?%\s+(?:of\s+(?:our|the)\s+(?:board\s+|director\s+)?(?:nominees|directors|members|board)\s+(?:are\s+|is\s+)?)?independent",
                        re.IGNORECASE)
+# "Our nominees include 9 independent directors ... and one NVIDIA officer"
+INDEP_INCLUDE = re.compile(
+    r"(?:nominees|board|directors)\s+(?:include|includes|consists?\s+of|is\s+(?:composed|comprised)\s+of)\s+" + NUM +
+    r"\s+independent\s+(?:directors|nominees|members)[^.;]{0,100}?\band\s+" + NUM +
+    r"\s+(?:[\w.&-]+\s+){0,3}?(?:officers?|employees?|executives?|members?\s+of\s+management|non-independent|management)", re.IGNORECASE)
 BOARD_SIZE = re.compile(r"size\s+of\s+(?:the\s+)?board\D{0,10}(\d{1,2})\b.{0,300}?number\s+of\s+independent\s+directors\D{0,10}(\d{1,2})\b",
                         re.IGNORECASE)
 
@@ -97,18 +126,23 @@ def board_independence(text):
             if m:
                 ind, total = _num(m.group(order[0])), _num(m.group(order[1]))
                 if 0 < ind <= total <= 30 and total >= 3:
-                    return {"independent": ind, "total": total, "pct": ind / total * 100, "evidence": _quote(s)}
+                    return {"independent": ind, "total": total, "pct": ind / total * 100, "evidence": _quote(s, at=m.start())}
+        m = INDEP_INCLUDE.search(s)
+        if m:
+            ind, others = _num(m.group(1)), _num(m.group(2))
+            if 0 < ind and 3 <= ind + others <= 30:
+                return {"independent": ind, "total": ind + others, "pct": ind / (ind + others) * 100, "evidence": _quote(s, at=m.start())}
         if all_but is None:
-            m = INDEP_ALL_BUT.search(s)
+            m = INDEP_ALL_BUT.search(s) or INDEP_ALL_EXCEPT.search(s)
             if m:
-                all_but = {"independent": None, "total": None, "pct": None, "except": m.group(1).strip(), "evidence": _quote(s)}
+                all_but = {"independent": None, "total": None, "pct": None, "except": m.group(1).strip(), "evidence": _quote(s, at=m.start())}
         if pct_hit is None:
             for p in INDEP_PCT.finditer(s):
                 # Committee independence ("our committees are 100% independent") isn't board independence
                 if re.search(r"committee", s[max(0, p.start() - 80):p.end() + 40], re.IGNORECASE):
                     continue
                 if 30 <= int(p.group(1)) <= 100 and re.search(r"director|board|nominee", s, re.IGNORECASE):
-                    pct_hit = {"independent": None, "total": None, "pct": float(p.group(1)), "evidence": _quote(s)}
+                    pct_hit = {"independent": None, "total": None, "pct": float(p.group(1)), "evidence": _quote(s, at=p.start())}
                     break
     return pct_hit or all_but
 
@@ -125,7 +159,7 @@ VOTE_BEFORE = re.compile(r"(?:received|receiving|with|support\s+of|approval\s+of
                          re.IGNORECASE)
 NOT_A_VOTE_BEFORE = re.compile(r"averag\w*\s*$|(?:CEO|NEOs?)\s*:\s*$|represent\w*\s*(?:approximately|about|over|more\s+than|nearly)?\s*$|\(\s*$", re.IGNORECASE)
 NOT_A_VOTE_AFTER = re.compile(r"^\s*(?:payout|of\s+(?:his|her|their|the|our)?\s*(?:total\s+)?(?:target\s+)?(?:direct\s+)?(?:pay|compensation)|"
-                              r"at[- ]risk|performance[- ]based|of\s+(?:our\s+)?(?:outstanding|institution)|of\s+target|weight)", re.IGNORECASE)
+                              r"at[- ]risk|performance[- ]based|of\s+(?:our\s+)?(?:outstanding|institution)|of\s+target|weight|or\s+(?:higher|more|greater|above|better))", re.IGNORECASE)
 YEAR = re.compile(r"\b(20[1-3]\d)\b")
 
 
@@ -183,11 +217,14 @@ def say_on_pay(text):
             years = years or _vote_years(s)
             year = years.get(m.start())
             strong = bool(VOTE_AFTER.search(after) or VOTE_BEFORE.search(before))
+            # A looser mention needs the vote itself named close by, not just somewhere in a long run-on "sentence"
+            if not strong and not re.search(r"say[- ]on[- ]pay|votes?\s+cast|advisory\s+vote|in\s+favor|support", s[max(0, m.start() - 100):m.end() + 100], re.IGNORECASE):
+                continue
             key = (strong, year or 0)
             # The year is only shown when it's certain: the sentence names one year, or it's written right before the number
             shown = year if len(set(YEAR.findall(s))) == 1 or re.search(rf"{year}\W{{0,3}}$", before or "") else None
             if best is None or key > best[0]:
-                best = (key, {"pct": pct, "approximate": bool(m.group(1)), "meeting_year": shown, "evidence": _quote(s)})
+                best = (key, {"pct": pct, "approximate": bool(m.group(1)), "meeting_year": shown, "evidence": _quote(s, at=m.start())})
     return best[1] if best else None
 
 

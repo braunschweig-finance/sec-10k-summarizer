@@ -68,7 +68,25 @@ REAL = [
     # Dick's: no verb before "independent"; the committees' 100% must not count as the board's
     ("Board Refreshment and Independence § 10 of 12 directors independent (1) § All committees are 100% independent", "Board Independence", 10 / 12 * 100),
     ("Of our 12 director nominees, 11 are independent.", "Board Independence", 11 / 12 * 100),
+    # NVIDIA: independent count plus the non-independent ones
+    ("Our nominees include 9 independent directors, as defined by the rules and regulations of Nasdaq, and one NVIDIA officer: "
+     "Mr. Huang.", "Board Independence", 90.0),
 ]
+
+
+def test_votes_quoted_around_the_number_and_floors_skipped():
+    # Uber: "85% or higher for each of the past five years" is a floor across years, not last year's vote
+    assert gm.say_on_pay("Since our Say-on-Pay vote in May 2020, we have obtained positive Say-on-Pay results of approximately "
+                         "85% or higher for each of the past five years.") is None
+    long = "Topics we discussed include strategy and pay. " + "Board oversight of many matters, " * 40 + \
+        "and at our 2025 annual meeting our say-on-pay vote received 91% support."
+    got = gm.say_on_pay(long.replace(". ", ", "))
+    assert got["pct"] == 91.0 and "91%" in got["evidence"] and got["evidence"].startswith("…")
+
+
+def test_abbreviations_do_not_split_sentences():
+    got = gm.board_independence("All director nominees are independent, except Mr. Decker, our Chair and CEO.")
+    assert got["except"] == "Mr. Decker"
 
 
 @pytest.mark.parametrize("text,metric,expected", REAL)
@@ -149,6 +167,27 @@ def test_run_in_headings():
         f'<p><b>{h}</b> {"Plain explanation follows here. " * 10}</p>' for h in THIS_YEAR[0][1]) + '<p><b>Item 2. Properties</b></p>')
     h = risk_factors.headings(risk_factors.item_1a_html(html))
     assert [r["title"] for r in h["risks"]] == THIS_YEAR[0][1]
+
+
+def test_toc_link_finds_item_1a_when_heading_sits_in_a_table():
+    # Microsoft: the real "Item 1A" heading is in a table cell, so only the table of contents links say where it is
+    body = "".join(f'<p><b>{h}</b></p><p>{"Body text. " * 30}</p>' for h in THIS_YEAR[0][1] + THIS_YEAR[1][1])
+    html = ('<table><tr><td>Item 1A.</td><td><a href="#risk">Risk Factors</a></td></tr>'
+            '<tr><td>Item 1B.</td><td><a href="#unres">Unresolved Staff Comments</a></td></tr></table>'
+            '<table><tr><td><span id="risk">ITEM 1A. RISK FACTORS</span></td></tr></table>' + body +
+            '<table><tr><td><span id="unres">ITEM 1B. UNRESOLVED STAFF COMMENTS</span></td></tr></table><p>None.</p>')
+    h = risk_factors.headings(risk_factors.item_1a_html(html))
+    assert [r["title"] for r in h["risks"]] == THIS_YEAR[0][1] + THIS_YEAR[1][1]
+
+
+def test_short_topic_headings_and_bullets():
+    # Pfizer titles each risk with a short topic; Lilly put a bullet before each heading one year
+    topics = ["MANAGED CARE TRENDS", "PRICING PRESSURE", "COMPETITIVE PRODUCTS", "PATENT PROTECTION", "GLOBAL OPERATIONS", "CYBERSECURITY"]
+    html = "<p><b>Item 1A. Risk Factors</b></p><p><b>Risks Related to Our Business</b></p>" + "".join(
+        f'<p><b>{t}</b></p><p>{"Body text. " * 30}</p>' for t in topics) + "<p><b>Item 1B. Unresolved</b></p>"
+    h = risk_factors.headings(risk_factors.item_1a_html(html))
+    assert [r["title"] for r in h["risks"]] == topics and h["categories"] == ["Risks Related to Our Business"]
+    assert risk_factors._clean("\u2022We face intense competition.") == "We face intense competition."
 
 
 def test_compare_marks_new_reworded_unchanged_removed():

@@ -440,15 +440,19 @@ function GovernanceNumbers({ m, bench, proxyUrl }: { m: GovernanceMetrics; bench
     },
     {
       name: "Board Independence",
-      value: board ? (board.total ? `${board.independent} of ${board.total}` : `${board.pct.toFixed(0)}%`) : "Not found",
-      sub: board?.total ? `${board.pct.toFixed(0)}% of directors are independent` : "Share of directors who are independent",
+      value: board ? (board.total ? `${board.independent} of ${board.total}` : board.pct !== null ? `${board.pct.toFixed(0)}%` : `All but ${board.except ? board.except.split(/,|\band\b/).filter((x) => x.trim()).length : 1}`) : "Not found",
+      sub: board?.total && board.pct !== null
+        ? `${board.pct.toFixed(0)}% of directors are independent`
+        : board?.except
+          ? `Every director except ${board.except} is independent`
+          : "Share of directors who are independent",
       evidence: board?.evidence,
-      compare: board ? `${board.pct}%` : "N/A",
+      compare: board?.pct != null ? `${board.pct}%` : "N/A",
     },
     {
       name: "Say-on-Pay Support",
       value: sop ? `${sop.approximate ? "≈" : ""}${sop.pct}%` : "Not found",
-      sub: sop?.meeting_year ? `Votes for executive pay at the ${sop.meeting_year} annual meeting` : "Votes for executive pay at the last annual meeting",
+      sub: sop?.meeting_year ? `Share of votes for executive pay (${sop.meeting_year} vote)` : "Share of votes for executive pay in the latest vote the proxy reports",
       evidence: sop?.evidence,
     },
   ];

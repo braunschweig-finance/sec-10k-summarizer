@@ -42,6 +42,37 @@ def _is_heading(html, pos):
     return lead == "" or bool(re.fullmatch(r"part\s+[iv]+\s*[.,:\u2014\u2013-]?", lead, re.IGNORECASE))
 
 
+HREF = re.compile(rb'href\s*=\s*"#([^"]{1,200})"', re.IGNORECASE)
+
+
+def _target(html, anchor):
+    m = re.search(rb'(?:id|name)\s*=\s*"' + re.escape(anchor) + rb'"', html)
+    return m.start() if m else None
+
+
+def _linked_1a(html):
+    """Item 1A by following the table of contents link ("Item 1A. <a href="#risk">Risk Factors</a>") to its anchor,
+    up to the anchor of the next item's link. Some filers set the real heading inside a table cell where it doesn't
+    look like a heading, but the links still say where the section starts and ends."""
+    items = list(ITEM.finditer(html))
+    for k, m in enumerate(items):
+        if m.group(1).lower() != b"1a":
+            continue
+        link = HREF.search(html, m.start(), m.end() + 1500)
+        if not link or "risk factors" not in _plain(html[m.start():m.end() + 1500]).lower()[:300]:
+            continue
+        start = _target(html, link.group(1))
+        for nxt in items[k + 1:k + 4]:
+            if nxt.group(1).lower() == b"1a":
+                continue
+            nlink = HREF.search(html, nxt.start(), nxt.end() + 1500)
+            end = _target(html, nlink.group(1)) if nlink and nlink.group(1) != link.group(1) else None
+            if start is not None and end is not None and end > start:
+                return start, end
+            break
+    return None
+
+
 def item_1a_html(html):
     """The raw HTML (bytes or str in, str out) of Item 1A: from an "Item 1A ... Risk Factors" heading to the next Item heading. Of all such
     stretches the longest wins, since the table of contents has the same words but almost nothing between them.
@@ -58,6 +89,9 @@ def item_1a_html(html):
             continue
         if best is None or end - pos > best[1] - best[0]:
             best = (pos, end)
+    linked = _linked_1a(html)
+    if linked and (best is None or linked[1] - linked[0] > best[1] - best[0]):
+        best = linked
     if best is None:
         return None
     # Back up to the start of the tag that holds "Item 1A", so the fragment parses cleanly
@@ -95,6 +129,7 @@ def _runs(block):
 
 
 def _clean(s):
+    s = re.sub(r"^[\s\u2022\u25cf\u25aa\u25a0\u2023\u2043\u00b7\uf0b7-]+", "", s)
     s = s.replace("\xa0", " ").replace("’", "'").replace("“", '"').replace("”", '"')
     return re.sub(r"\s+", " ", s).strip()
 
@@ -139,7 +174,7 @@ SKIP = re.compile(r"^(?:item\s*1a|risk factors\.?$|table of contents|index|\d+$|
 # Introductions some filers also set in bold or italic ("The following risk factors should be considered...")
 INTRO = re.compile(r"^(?:the\s+following|the\s+above|readers\s+should|you\s+should|investors\s+should|in\s+addition\s+to\s+the\s+other|"
                    r"this\s+section|we\s+are\s+subject\s+to\s+(?:a\s+)?(?:number|variety)\s+of\s+risks|our\s+business,?\s+(?:operations\s+)?and\s+financial|"
-                   r"an\s+investment\s+in|investing\s+in)", re.IGNORECASE)
+                   r"an\s+investment\s+in|investing\s+in|certain\s+factors\s+may)", re.IGNORECASE)
 
 
 def headings(fragment_html):
@@ -151,7 +186,7 @@ def headings(fragment_html):
     # Use run-in headings when the filing has more of them than whole emphasized paragraphs of heading length
     use_run_ins = run_ins > sum(1 for t, e in emphasized if len(t) >= 40)
 
-    risks, categories, category = [], [], None
+    items = []
     for text, emph, lead in rows:
         if SKIP.match(text):
             continue
@@ -159,10 +194,20 @@ def headings(fragment_html):
         if not title:
             continue
         if len(title) < 120 and not title.endswith(".") and (CATEGORY.match(title) or len(title.split()) <= 8):
+            items.append(("category", title))
+        elif 30 <= len(title) <= 900 and not INTRO.match(title):
+            items.append(("risk", title))
+    # Some filers title each risk with a short topic ("MANAGED CARE TRENDS") instead of a sentence. When there are
+    # hardly any sentence headings, the short ones that aren't group names ("Risks Related to ...") are the risks.
+    if sum(1 for kind, _ in items if kind == "risk") < 5:
+        items = [("risk" if kind == "category" and not CATEGORY.match(t) and len(t) >= 8 else kind, t) for kind, t in items]
+
+    risks, categories, category = [], [], None
+    for kind, title in items:
+        if kind == "category":
             category = title
             categories.append(title)
-            continue
-        if 30 <= len(title) <= 900 and not INTRO.match(title):
+        else:
             risks.append({"title": title, "category": category})
     return {"categories": categories, "risks": risks, "words": words}
 
