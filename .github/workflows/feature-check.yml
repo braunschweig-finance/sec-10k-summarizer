@@ -1,0 +1,22 @@
+# Live checks of the lookup code against SEC EDGAR, on GitHub's machines (they can reach SEC; Claude's sandbox can't).
+# Runs on pushes to feature branches and on demand from Actions > Live feature check.
+name: Live feature check
+
+on:
+  push:
+    branches-ignore: [main]
+    paths: ["api/**", ".github/workflows/feature-check.yml"]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -q -r api/requirements.txt pytest
+      - name: Probe
+        working-directory: api
+        run: python tests/probe.py
