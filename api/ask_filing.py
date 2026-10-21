@@ -170,21 +170,22 @@ def parse(text):
 
 
 def tenk_text(ticker):
-    """The SEC part (no AI): the latest 10-K's text and address. Runs in the API's child process, since a large
-    filer's 10-K is many megabytes of HTML."""
+    """The SEC part (no AI): the latest 10-K's text and address. Runs in the API's child process. The filing is found
+    from SEC's plain filing list rather than edgartools' filings table, which costs big banks over 100 MB more."""
     import sec_core
     company = sec_core.Company(ticker)
-    filing = sec_core.annual_reports(company)[0]
-    url = sec_core.primary_doc_url(filing)
+    filing = next((f for f in filing_text.submissions(company.cik) if f["form"] == "10-K"), None)
+    if not filing:
+        raise sec_core.DataUnavailable(sec_core.NO_10K.format(name=company.name))
+    url = f"{filing_text.folder(filing['cik'], filing['accession'])}/{filing['primary_doc']}"
     text = filing_text.fetch_text(url)
     if len(text) < SMALL_10K:
         # The 10-K body is a shell that points to the annual report, filed as Exhibit 13
-        for doc_type, doc_url in filing_text.documents(filing.cik, filing.accession_no):
+        for doc_type, doc_url in filing_text.documents(filing["cik"], filing["accession"]):
             if doc_type.startswith("EX-13") and doc_url.lower().endswith((".htm", ".html")):
                 text += "\n" + filing_text.fetch_text(doc_url)
-    period = str(getattr(filing, "period_of_report", "") or "")
-    return {"ticker": ticker.upper(), "name": company.name, "accession": filing.accession_no, "url": url,
-            "filed": str(filing.filing_date), "period": period, "text": text}
+    return {"ticker": ticker.upper(), "name": company.name, "accession": filing["accession"], "url": url,
+            "filed": filing["filed"], "period": filing["period"], "text": text}
 
 
 def answer(doc, question):
