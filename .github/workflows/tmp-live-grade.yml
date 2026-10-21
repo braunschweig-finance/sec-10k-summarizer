@@ -1,0 +1,32 @@
+name: tmp live grade check
+on:
+  push:
+    branches: [tmp/live-grade-check]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Call the live API
+        run: |
+          API=https://sec-terminal-api.onrender.com
+          curl -s --max-time 90 $API/health; echo
+          curl -s --max-time 60 $API/api/prebuilt-status; echo
+          for t in MSFT SMCI CAT JPM; do
+            for i in 1 2 3; do
+              start=$(date +%s)
+              code=$(curl -s -o grade_$t.json -w "%{http_code}" --max-time 170 $API/api/grade/$t)
+              echo "$t attempt $i: HTTP $code in $(( $(date +%s) - start ))s"
+              [ "$code" = "200" ] && break
+              head -c 400 grade_$t.json; echo; sleep 20
+            done
+            python3 -c "
+          import json; d=json.load(open('grade_$t.json'))
+          print('  ', d.get('letter'), round(d.get('score') or 0,1), 'available', d.get('available'))
+          for c in d.get('components',[]):
+              x=c['details']; extra={k:x.get(k) for k in ('high','medium','low','why','upside_pct','verdict') if k in x}
+              print('    ', c['name'], round(c['score'],1), c['letter'], 'w', round(c['used_weight']), extra)
+              if c['part']=='governance': print('       ', [(i['metric'], round(i['value'],2), round(i['score'])) for i in x['items']])
+          for m in d.get('missing',[]): print('    MISSING', m)
+          " || head -c 600 grade_$t.json
+          done
