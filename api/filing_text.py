@@ -54,22 +54,27 @@ def documents(cik, accn):
     return docs
 
 
-BLOCK_END = re.compile(r"</(?:p|div|tr|li|h[1-6]|table|title)\s*>|<br\s*/?>", re.IGNORECASE)
-CELL_END = re.compile(r"</t[dh]\s*>", re.IGNORECASE)
+BLOCK_END = re.compile(rb"</(?:p|div|tr|li|h[1-6]|table|title)\s*>|<br\s*/?>", re.IGNORECASE)
+CELL_END = re.compile(rb"</t[dh]\s*>", re.IGNORECASE)
+HIDDEN = re.compile(rb"<ix:header.*?</ix:header>|<script.*?</script>|<style.*?</style>", re.DOTALL | re.IGNORECASE)
+TAG = re.compile(rb"<[^>]+>")
 
 
 def html_text(raw):
     """Readable text with one line per paragraph or table row. Table cells are kept in order on their row, so a
-    debt maturity table reads like "2027 $ 1,500 2028 2,250"."""
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", errors="ignore")
+    debt maturity table reads like "2027 $ 1,500 2028 2,250".
+    Works on bytes until the tags are gone: a bank's 10-K is tens of MB of HTML, and as a Python string with one
+    curly quote in it, each copy would take two to four times that."""
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
     # Inline XBRL keeps its hidden facts in ix:header; scripts and styles aren't text either
-    raw = re.sub(r"<ix:header.*?</ix:header>|<script.*?</script>|<style.*?</style>", " ", raw,
-                 flags=re.DOTALL | re.IGNORECASE)
-    raw = BLOCK_END.sub("\n", raw)
-    raw = CELL_END.sub(" ", raw)
-    raw = re.sub(r"<[^>]+>", " ", raw)
-    text = _html.unescape(raw).replace("\xa0", " ").replace("​", "")
+    raw = HIDDEN.sub(b" ", raw)
+    raw = BLOCK_END.sub(b"\n", raw)
+    raw = CELL_END.sub(b" ", raw)
+    raw = TAG.sub(b" ", raw)
+    text = _html.unescape(raw.decode("utf-8", errors="ignore"))
+    del raw
+    text = text.replace("\xa0", " ").replace("\u200b", "")
     lines = (re.sub(r"[ \t\r\f\v]+", " ", line).strip() for line in text.split("\n"))
     return "\n".join(line for line in lines if line)
 
