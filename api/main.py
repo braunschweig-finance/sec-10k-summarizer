@@ -18,8 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+import ai_client
 import benchmarks
 import export
+import governance_policies
 import prebuilt
 import sec_core
 from sec_core import DataUnavailable
@@ -297,22 +299,21 @@ def memo_key(report):
 
 @app.post("/api/memo")
 def memo(req: MemoRequest):
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(503, "GEMINI_API_KEY is not set on the API server.")
     report = full_report(req.ticker)
-    key = memo_key(report)
+    ai = ai_client.describe()
+    # The model is part of the key, so switching where the AI runs doesn't serve an old model's memo
+    key = memo_key(report) + (ai["provider"], ai["model"])
 
     with _memos_lock:
         key_lock = _memo_key_locks.setdefault(key, threading.Lock())
-    # One Gemini call per key: a second identical request waits here, then reads the cache
+    # One AI call per key: a second identical request waits here, then reads the cache
     with key_lock:
         with _memos_lock:
             if key in _memos:
                 _memos.move_to_end(key)
                 print(f"[{key[0]}] memo: served from cache", flush=True)
                 return {**_memos[key], "cached": True}
-        result = write_memo(api_key, report)
+        result = write_memo(report)
         with _memos_lock:
             _memos[key] = result
             while len(_memos) > MEMO_CACHE_SIZE:
@@ -321,34 +322,42 @@ def memo(req: MemoRequest):
     return {**result, "cached": False}
 
 
-def write_memo(api_key, report):
-    from google import genai
-    client = genai.Client(api_key=api_key)
-    response, last_error = None, None
-    # Same retry rule as app.py: a 429 moves to the next model instead of retrying
-    for model_name in ["gemini-3.8-flash", "gemini-3.6-flash"]:
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(model=model_name, contents=memo_prompt(report))
-                break
-            except Exception as err:
-                last_error = err
-                if attempt == 0 and ("503" in str(err) or "UNAVAILABLE" in str(err)):
-                    time.sleep(3)
-                    continue
-                break
-        if response:
-            break
+def write_memo(report):
+    try:
+        reply = ai_client.chat(memo_prompt(report))
+    except ai_client.AIError as e:
+        raise HTTPException(429 if e.busy else 503, str(e))
+    return {"text": reply["text"], "usage": reply["usage"], "model": reply["model"]}
 
-    if not response:
-        if "429" in str(last_error) or "RESOURCE_EXHAUSTED" in str(last_error):
-            raise HTTPException(429, "The AI writer is busy (free-tier limit). Try again in a minute.")
-        raise HTTPException(502, f"Failed to generate memo: {last_error}")
 
-    usage = None
-    if getattr(response, "usage_metadata", None):
-        usage = {"input": response.usage_metadata.prompt_token_count, "output": response.usage_metadata.candidates_token_count}
-    return {"text": response.text, "usage": usage}
+@app.get("/api/ai-status")
+def ai_status():
+    """Which AI the server is set to use (provider, address, model). The key itself is never shown."""
+    return ai_client.describe()
+
+
+_policies = OrderedDict()
+
+
+@app.get("/api/governance-policies/{ticker}")
+def governance_policies_route(ticker: str):
+    """Ten governance policies read from the proxy by the AI, each with a quote checked against the filing.
+    About ten AI calls per company, so results are kept in memory."""
+    ticker = ticker.strip().upper()
+    ai = ai_client.describe()
+    key = (ticker, ai["provider"], ai["model"])
+    if key in _policies:
+        return {**_policies[key], "cached": True}
+    try:
+        result = _timed("governance policies", ticker, governance_policies.get_governance_policies)
+    except DataUnavailable as e:
+        raise HTTPException(422, str(e))
+    except ai_client.AIError as e:
+        raise HTTPException(429 if e.busy else 503, str(e))
+    _policies[key] = result
+    while len(_policies) > 64:
+        _policies.popitem(last=False)
+    return {**result, "cached": False}
 
 
 class DocxRequest(BaseModel):
