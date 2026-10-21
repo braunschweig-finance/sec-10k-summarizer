@@ -1,4 +1,4 @@
-import type { Governance, PayEfficiency, Report, RiskSummary, Trends } from "./types";
+import type { Governance, PayEfficiency, Report, RiskSummary, Trends, Valuation } from "./types";
 import { SAMPLE_CAT } from "./sample";
 
 // Set on Vercel to the Render address of the Python API. Empty means sample mode.
@@ -66,6 +66,13 @@ export async function fetchRisks(ticker: string): Promise<RiskSummary> {
   if (!API_URL) throw new Error("The 10-K summary reads each year's risk factors from SEC once the API is online.");
   const res = await callApi(`/api/risks/${encodeURIComponent(ticker)}`);
   if (!res.ok) throw new Error(await errorText(res, "the 10-K summary"));
+  return res.json();
+}
+
+export async function fetchValuation(ticker: string): Promise<Valuation> {
+  if (!API_URL) throw new Error("The fair value estimate compares live prices across the Russell 1000, so it turns on once the API is online.");
+  const res = await callApi(`/api/valuation/${encodeURIComponent(ticker)}`);
+  if (!res.ok) throw new Error(await errorText(res, "the fair value estimate"));
   return res.json();
 }
 

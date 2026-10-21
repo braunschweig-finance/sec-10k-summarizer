@@ -8,6 +8,7 @@ app.py can't be imported directly because it runs the Streamlit page as soon as 
 import io
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import date
 import threading
@@ -549,7 +550,12 @@ PRETAX_TAGS = [
 
 
 def sec_fetch(url):
-    r = httpx.get(url, headers={"User-Agent": SEC_IDENTITY}, timeout=60, follow_redirects=True)
+    # SEC allows about 10 requests a second; when it says "too many" (429), wait and try again, a little longer each time
+    for wait in (2, 4, 8, 16, None):
+        r = httpx.get(url, headers={"User-Agent": SEC_IDENTITY}, timeout=60, follow_redirects=True)
+        if r.status_code != 429 or wait is None:
+            break
+        time.sleep(wait)
     r.raise_for_status()
     return r.content
 
@@ -647,10 +653,10 @@ def ceo_name(member):
     return name.strip()
 
 
-def tenk_value(gaap, tags, fy_end):
+def tenk_value(gaap, tags, fy_end, unit="USD"):
     """First-filed 10-K value of a full-year income statement item for fy_end: (value, tag, accession)."""
     for tag in tags:
-        hits = [r for r in gaap.get(tag, {}).get("units", {}).get("USD", [])
+        hits = [r for r in gaap.get(tag, {}).get("units", {}).get(unit, [])
                 if r.get("form") == "10-K" and days_apart(r["end"], fy_end) <= 10
                 and "start" in r and 340 <= days_apart(r["start"], r["end"]) <= 390]
         if hits:
@@ -751,20 +757,30 @@ FACTS_CACHE_SIZE = 16
 
 def used_tags():
     return set(OP_TAGS + PRETAX_TAGS + ["InterestIncomeExpenseNet", "NoninterestIncome"]
-               + [t for tags in TREND_TAGS.values() for t in tags])
+               + [t for tags in TREND_TAGS.values() for t in tags]
+               + [t for tags in {**VALUE_FLOWS, **VALUE_BALANCES, **EXTRA_FLOWS}.values() for t in tags])
+
+
+FACT_UNITS = ("USD", "shares", "USD/shares")
 
 
 def slim_facts(us_gaap):
-    """Keeps only the full-year 10-K rows of the tags this app reads, in the same shape as companyfacts."""
+    """Keeps only the 10-K rows of the tags this app reads, in the same shape as companyfacts: full-year amounts, and
+    year-end balances (rows with no start date)."""
     keep = used_tags()
     out = {}
     for tag, body in us_gaap.items():
         if tag not in keep:
             continue
-        rows = [{k: r.get(k) for k in FACT_KEYS} for r in body.get("units", {}).get("USD", [])
-                if r.get("form") == "10-K" and "start" in r and 340 <= days_apart(r["start"], r["end"]) <= 390]
-        if rows:
-            out[tag] = {"units": {"USD": rows}}
+        units = {}
+        for unit in FACT_UNITS:
+            # A year-end balance has no start date, and its row has no "start" key, as in companyfacts itself
+            rows = [{k: r[k] for k in FACT_KEYS if k in r} for r in body.get("units", {}).get(unit, [])
+                    if r.get("form") == "10-K" and ("start" not in r or 340 <= days_apart(r["start"], r["end"]) <= 390)]
+            if rows:
+                units[unit] = rows
+        if units:
+            out[tag] = {"units": units}
     return out
 
 
@@ -850,6 +866,130 @@ def get_trends(ticker_symbol):
     ends = fiscal_year_ends(gaap, TREND_TAGS["Revenue"] + TREND_TAGS["Net Income"])[-TREND_YEARS:]
     print(f"[{ticker_symbol}] trends: {len(ends)} fiscal years", flush=True)
     return {"ticker": ticker_symbol, "years": [trend_year(gaap, cik, e) for e in ends], "prices": prices.year_end_closes(ticker_symbol, ends)}
+
+
+# ---------- Inputs for the fair value estimate (valuation.py): same companyfacts file, each year's own 10-K ----------
+
+VALUE_FLOWS = {
+    "Revenue": TREND_TAGS["Revenue"],
+    "Operating Income": OP_TAGS,
+    "Net Income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"],
+    "Depreciation & Amortization": ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
+                                    "DepreciationAndAmortization", "DepreciationAmortizationAndOther"],
+    "Diluted Shares": ["WeightedAverageNumberOfDilutedSharesOutstanding"],
+    "Diluted EPS": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"],
+}
+FLOW_UNITS = {"Diluted Shares": "shares", "Diluted EPS": "USD/shares"}
+# Fallbacks when a company doesn't file the usual line: EBIT from pretax income plus interest expense (Exxon files no
+# operating income line), D&A from depreciation plus intangible amortization (Alphabet files them separately)
+EXTRA_FLOWS = {"Pretax Income": PRETAX_TAGS, "Interest Expense": ["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt"],
+               "Depreciation": ["Depreciation", "DepreciationNonproduction", "DepreciationOfPropertyPlantAndEquipment"],
+               "Amortization of Intangibles": ["AmortizationOfIntangibleAssets"]}
+VALUE_BALANCES = {
+    "Total Assets": ["Assets"],
+    "Total Liabilities": ["Liabilities"],
+    "Shareholders' Equity": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    "Cash": ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "Cash"],
+    "Short-term Investments": ["ShortTermInvestments", "MarketableSecuritiesCurrent", "AvailableForSaleSecuritiesDebtSecuritiesCurrent"],
+    "Long-term Debt (total)": ["LongTermDebt"],
+    "Long-term Debt (noncurrent)": ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"],
+    "Long-term Debt (current)": ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent"],
+    "Debt (current)": ["DebtCurrent"],
+    "Short-term Borrowings": ["ShortTermBorrowings"],
+    "Commercial Paper": ["CommercialPaper"],
+}
+VALUE_YEARS = 10  # enough history for the back-test, which starts in mid-2018
+
+
+def tenk_balance(gaap, tags, fy_end):
+    """First-filed 10-K year-end balance for fy_end: (value, tag, accession, filed date)."""
+    return _first_filed(gaap, tags, lambda r: "start" not in r and days_apart(r["end"], fy_end) <= 10)
+
+
+def _first_filed(gaap, tags, match, unit="USD", largest=False, skip_zero=False):
+    """The value as first reported: of all the tags, the 10-K row filed earliest (ties go to the earlier tag in the list,
+    or with largest=True to the biggest value, so total revenue wins over a revenue sub-line tagged in the same filing).
+    A company that switched tags (most did for revenue in 2018) shows the new tag in later 10-Ks' comparative years,
+    which weren't public until then; the back-test must not see those early."""
+    best = None
+    for i, tag in enumerate(tags):
+        for r in gaap.get(tag, {}).get("units", {}).get(unit, []):
+            if r.get("form") != "10-K" or not match(r) or (skip_zero and not r["val"]):
+                continue
+            key = (r["filed"], -r["val"] if largest else 0, i)
+            if best is None or key < best[0]:
+                best = (key, r, tag)
+    if best is None:
+        return None, None, None, None
+    _, r, tag = best
+    return r["val"], tag, r["accn"], r["filed"]
+
+
+def tenk_flow(gaap, tags, fy_end, unit="USD", largest=False):
+    """A full-year amount as first reported in a 10-K, with the filing date, so the back-test only uses numbers that were
+    public at the time: (value, tag, accession, filed date). A zero is skipped (Flowserve tags a $0 "Revenues" line)."""
+    return _first_filed(gaap, tags, lambda r: days_apart(r["end"], fy_end) <= 10 and "start" in r
+                        and 340 <= days_apart(r["start"], r["end"]) <= 390, unit, largest=largest, skip_zero=True)
+
+
+def valuation_year(gaap, cik, fy_end):
+    """One fiscal year's valuation inputs, each {"value", "concept", "accn", "url"} as first filed in a 10-K."""
+    values, filed = {}, []
+
+    def keep(name, hit):
+        val, tag, accn, when = hit
+        if val is None:
+            values[name] = None
+            return
+        values[name] = {"value": val, "concept": f"us-gaap:{tag}", "accn": accn, "url": filing_folder(cik, accn)}
+        filed.append(when)
+
+    for name, tags in VALUE_FLOWS.items():
+        keep(name, tenk_flow(gaap, tags, fy_end, FLOW_UNITS.get(name, "USD"), largest=name == "Revenue"))
+    if values["Revenue"] is None:
+        # Banks: net interest income + noninterest income, the same rule as the ratio cards and trends
+        nii = tenk_flow(gaap, ["InterestIncomeExpenseNet"], fy_end)
+        nonint = tenk_flow(gaap, ["NoninterestIncome"], fy_end)
+        if nii[0] is not None and nonint[0] is not None:
+            values["Revenue"] = {"value": nii[0] + nonint[0], "concept": "Derived: InterestIncomeExpenseNet + NoninterestIncome",
+                                 "accn": nii[2], "url": filing_folder(cik, nii[2])}
+            filed.append(max(nii[3], nonint[3]))
+    for name, tags in VALUE_BALANCES.items():
+        keep(name, tenk_balance(gaap, tags, fy_end))
+
+    def derived(name, label, parts):
+        hits = [tenk_flow(gaap, EXTRA_FLOWS[p], fy_end) for p in parts]
+        if hits[0][0] is None:
+            return
+        used = [(p, h) for p, h in zip(parts, hits) if h[0] is not None]
+        values[name] = {"value": sum(h[0] for _, h in used), "concept": f"Derived: {' + '.join('us-gaap:' + h[1] for _, h in used)} ({label})",
+                        "accn": hits[0][2], "url": filing_folder(cik, hits[0][2])}
+        filed.append(max(h[3] for _, h in used))
+
+    if values["Operating Income"] is None:
+        derived("Operating Income", "pretax income + interest expense", ["Pretax Income", "Interest Expense"])
+    if values["Depreciation & Amortization"] is None:
+        derived("Depreciation & Amortization", "depreciation + amortization of intangibles", ["Depreciation", "Amortization of Intangibles"])
+    return {"fy_end": fy_end, "fiscal_year": peers.fiscal_year(fy_end), "filed": max(filed) if filed else None, "values": values}
+
+
+def get_valuation_inputs(ticker_symbol):
+    """Up to ten fiscal years of the 10-K numbers the fair value estimate needs (valuation.py does the math)."""
+    company = Company(ticker_symbol)
+    cik = str(company.cik).zfill(10)
+    gaap = companyfacts(cik)
+    ends = fiscal_year_ends(gaap, VALUE_FLOWS["Revenue"] + VALUE_FLOWS["Net Income"])[-VALUE_YEARS:]
+    if not ends:
+        raise DataUnavailable(NO_10K.format(name=company.name))
+    print(f"[{ticker_symbol}] valuation inputs: {len(ends)} fiscal years", flush=True)
+    return {
+        "ticker": ticker_symbol,
+        "name": company.name,
+        "cik": cik,
+        "sic": str(getattr(company, "sic", "") or ""),
+        "industry": str(getattr(company, "industry", "") or ""),
+        "years": [valuation_year(gaap, cik, e) for e in ends],
+    }
 
 
 # ---------- Plain-English 10-K summary: risk factor headings and what changed (see risk_factors.py) ----------

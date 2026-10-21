@@ -1,5 +1,5 @@
 """
-Builds prebuilt.tar.gz for the API (see prebuilt.py): the five lookups for every Russell 1000 company
+Builds prebuilt.tar.gz for the API (see prebuilt.py): the six lookups for every Russell 1000 company
 (data/russell1000.csv) and S&P 500 company (data/sp500_tickers.txt) plus any given on the command line, each saved
 exactly as the API would return it, and the sector medians built from them (benchmarks.py). A lookup that fails
 is left out, so the API reads that one live. One SEC has no data for (no 10-K, say) is saved as that answer.
@@ -16,6 +16,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import benchmarks
 import sec_core
+import valuation
 
 LOOKUPS = {
     "company": sec_core.get_financial_report,
@@ -23,6 +24,7 @@ LOOKUPS = {
     "pay_efficiency": sec_core.get_pay_efficiency,
     "trends": sec_core.get_trends,
     "risks": sec_core.get_risk_summary,
+    "fundamentals": sec_core.get_valuation_inputs,
 }
 OUT = "prebuilt"
 WORKERS = int(os.environ.get("PREBUILD_WORKERS", "6"))
@@ -68,6 +70,12 @@ def main():
     with open(os.path.join(OUT, "benchmarks.json"), "w") as f:
         json.dump(bench, f, allow_nan=False)
     print(f"Sector medians for {len(bench['sectors'])} sectors", flush=True)
+    # Fair value peers and back-test: every company's 10-K inputs at the latest close, and the yearly back-test
+    val = valuation.build(OUT, sorted(done))
+    val["built_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with open(os.path.join(OUT, "valuation.json"), "w") as f:
+        json.dump(val, f, allow_nan=False)
+    print(f"Fair value back-test: {json.dumps(val['backtest']['average'])}", flush=True)
     manifest = {"built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "tickers": sorted(done), "failures": failures}
     with open(os.path.join(OUT, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=1)
