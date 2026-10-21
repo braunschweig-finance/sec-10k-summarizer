@@ -44,6 +44,7 @@ METHODS = {
     "P/B": ("equity", "Book Equity"),
 }
 PEER_COUNT = 8
+WIDE_RANGE = 3.0       # a range whose top is over this many times its bottom is marked low confidence
 MIN_PEERS = 3          # a multiple needs at least this many peers with a positive value, or it's left out
 MAX_STALE_DAYS = 550   # the latest 10-K must cover a fiscal year that ended within this many days
 INDUSTRY_STEP = [0.0, 0.5, 1.0, 1.5]  # added distance: same 4-digit SIC, 3-digit, 2-digit, only the same sector
@@ -79,6 +80,9 @@ def debt_and_cash(year):
     else:
         parts = ["Long-term Debt (noncurrent)", "Long-term Debt (current)", "Short-term Borrowings", "Commercial Paper"]
     parts = [p for p in parts if g(p) is not None]
+    if not any(p.startswith("Long-term Debt") for p in parts) and g("Convertible Debt") is not None:
+        # Some companies tag only their convertible notes (Super Micro); otherwise they're inside long-term debt already
+        parts.append("Convertible Debt")
     debt = _sum(*[g(p) for p in parts])
     cash_parts = [p for p in ("Cash", "Short-term Investments") if g(p) is not None]
     return debt, _sum(*[g(p) for p in cash_parts]), parts + cash_parts
@@ -235,8 +239,13 @@ def value(target, rows, k=PEER_COUNT):
     fair, low, high = med("value"), med("low"), med("high")
     price = target["price"]
     verdict = "undervalued" if price < low else "overvalued" if price > high else "fairly valued"
+    # When the top of the range is over 3x the bottom (about 1 company in 8), the peers price businesses like this one
+    # very differently, and the midpoint says little
+    wide = high > WIDE_RANGE * low
     return {**out, "available": True, "fair_value": fair, "low": low, "high": high, "price": price,
-            "upside_pct": (fair / price - 1) * 100, "verdict": verdict}
+            "upside_pct": (fair / price - 1) * 100, "verdict": verdict, "confidence": "low" if wide else "normal",
+            "confidence_note": (f"Low confidence: the peers' range runs from {low:,.2f} to {high:,.2f} per share, over "
+                                f"{WIDE_RANGE:.0f}x apart, so the closest companies value a business like this very differently.") if wide else ""}
 
 
 PEER_KEYS = ("ticker", "name", "sic", "industry", "fy_end", "price", "price_date", "market_cap", "figures", "multiples", "features")

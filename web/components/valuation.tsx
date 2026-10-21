@@ -65,6 +65,7 @@ export function FairValuePanel({ report }: { report: Report }) {
       </p>
 
       <Headline v={data} />
+      {data.confidence_note && <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{data.confidence_note}</p>}
       {data.notes?.map((n) => (
         <p key={n} className="rounded-xl border border-brass/30 bg-brass/10 px-4 py-3 text-sm text-brass">{n}</p>
       ))}

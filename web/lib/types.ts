@@ -230,6 +230,8 @@ export type Valuation = {
   price?: number;
   upside_pct?: number;
   verdict?: "undervalued" | "fairly valued" | "overvalued";
+  confidence?: "low" | "normal";
+  confidence_note?: string;
   methods?: ValuationMethod[];
   peers?: ValuationPeer[];
   notes?: string[];

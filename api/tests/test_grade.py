@@ -96,3 +96,12 @@ def test_overall_weights_and_missing_parts():
 
 def test_letters():
     assert [grade.letter(s) for s in (95, 80, 79.9, 65, 50, 35, 34.9)] == ["A", "A", "B", "B", "C", "D", "F"]
+
+
+def test_negative_pay_efficiency_and_low_confidence_value_left_out():
+    # Compensation actually paid below zero (stock fell): not scored as "efficient"
+    res, _ = grade.governance_part(gov(), {"available": True, "pct": -15.2, "denominator": "operating"}, BENCH)
+    assert "Pay Efficiency" not in [i["metric"] for i in res["items"]]
+    part, why = grade.valuation_part({"available": True, "upside_pct": 340, "verdict": "undervalued", "fair_value": 150,
+                                      "price": 32, "confidence": "low", "confidence_note": "Low confidence: wide range"})
+    assert part is None and why.startswith("Low confidence")
