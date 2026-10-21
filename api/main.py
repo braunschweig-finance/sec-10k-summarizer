@@ -23,7 +23,9 @@ import benchmarks
 import export
 import governance_policies
 import prebuilt
+import prices
 import sec_core
+import valuation
 from sec_core import DataUnavailable
 
 app = FastAPI(title="SEC Financial & Corporate Governance Terminal API")
@@ -154,7 +156,12 @@ def cached_risks(ticker):
     return _lookup("risks", "Risk factors", sec_core.get_risk_summary, ticker)
 
 
-CACHES = (cached_financials, cached_governance, cached_pay_efficiency, cached_trends, cached_risks)
+@lru_cache(maxsize=64)
+def cached_fundamentals(ticker):
+    return _lookup("fundamentals", "Valuation inputs", sec_core.get_valuation_inputs, ticker)
+
+
+CACHES = (cached_financials, cached_governance, cached_pay_efficiency, cached_trends, cached_risks, cached_fundamentals)
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
@@ -239,6 +246,45 @@ def trends(ticker: str):
 @app.get("/api/risks/{ticker}")
 def risks(ticker: str):
     return lookup(cached_risks, ticker)
+
+
+_quotes = {}  # ticker -> (fetched at, price, date); a fresh close every 15 minutes at most
+QUOTE_SECONDS = 15 * 60
+
+
+def latest_close(ticker):
+    """(the latest close as traded, its date) from Yahoo Finance, or (None, None) if Yahoo doesn't answer."""
+    hit = _quotes.get(ticker)
+    if hit and time.time() - hit[0] < QUOTE_SECONDS:
+        return hit[1], hit[2]
+    from datetime import date, timedelta
+    try:
+        h = prices.history(ticker, date.today() - timedelta(days=10), date.today())
+    except Exception as e:
+        print(f"[{ticker}] latest price unavailable: {e!r}", flush=True)
+        return None, None
+    if not h["days"]:
+        return None, None
+    i = len(h["days"]) - 1
+    _quotes[ticker] = (time.time(), prices.raw_close(h, i), h["days"][i].isoformat())
+    return _quotes[ticker][1], _quotes[ticker][2]
+
+
+@app.get("/api/valuation/{ticker}")
+def fair_value(ticker: str):
+    fund = lookup(cached_fundamentals, ticker)
+    universe = valuation.load(prebuilt.valuation_path())
+    if not universe:
+        raise HTTPException(503, "The peer data for fair value isn't loaded yet (it comes with the weekly ready-made data). Try again in a few minutes.")
+    t = fund["ticker"]
+    price, day = latest_close(t)
+    price_note = "Latest close from Yahoo Finance, as traded."
+    if price is None:
+        row = next((r for r in universe["rows"] if r["ticker"] == t), None)
+        if not row:
+            raise HTTPException(502, f"Yahoo Finance didn't return a share price for {t}, so it can't be compared with a fair value.")
+        price, day, price_note = row["price"], row["price_date"], "Yahoo Finance didn't answer just now, so this is the close from the weekly data build."
+    return valuation.report(fund, price, day, universe, price_note)
 
 
 def full_report(ticker):
