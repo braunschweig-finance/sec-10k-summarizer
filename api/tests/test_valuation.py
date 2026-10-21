@@ -146,3 +146,13 @@ def test_value_as_first_reported_across_tags():
             "SalesRevenueNet": {"units": {"USD": [row(100, "2017-02-20"), row(101, "2018-02-20")]}}}
     val, tag, _, filed = sec_core.tenk_flow(gaap, ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "2016-12-31")
     assert (val, tag, filed) == (100, "SalesRevenueNet", "2017-02-20")
+
+
+def test_wide_peer_range_is_low_confidence_and_convertibles_count_as_debt():
+    universe = [valuation.build_row(fund(t), p, date(2026, 6, 30)) for t, p in (("P1", 5.0), ("P2", 20.0), ("P3", 60.0))]
+    est = valuation.value(valuation.build_row(fund("AAA"), 20.0, date(2026, 6, 30)), universe)
+    assert est["high"] > 3 * est["low"] and est["confidence"] == "low"
+    y = {"values": {"Convertible Debt": hit(400), "Cash": hit(50)}}
+    assert valuation.debt_and_cash(y)[:2] == (400, 50)
+    y = {"values": {"Long-term Debt (total)": hit(900), "Convertible Debt": hit(400)}}   # already inside the total
+    assert valuation.debt_and_cash(y)[0] == 900

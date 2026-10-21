@@ -11,8 +11,9 @@ Each part is scored 0-100, 50 being typical:
   Governance (35%)    Board independence, say-on-pay support, CEO pay ratio and Pay Efficiency, each placed against
                       the company's sector (the Russell 1000 medians in benchmarks.json): the sector's 25th percentile
                       scores 25, its median 50, its 75th percentile 75, straight lines between and beyond, kept within
-                      0-100. Lower is better for the pay ratio and Pay Efficiency. A say-on-pay vote under 70% (the
-                      level proxy advisers treat as a failed vote) scores at most 20. The part is the average of the
+                      0-100. Lower is better for the pay ratio and Pay Efficiency (only a positive Pay Efficiency
+                      counts). A say-on-pay vote under 70% (the level proxy advisers treat as a failed vote) scores
+                      at most 20. The part is the average of the
                       numbers found.
   Red flags (35%)     100, minus 35 for each high flag (restatement, delisting notice, bankruptcy, late 10-K), 12 for
                       each medium one (auditor change, late 10-Q, cyber incident, CEO or CFO leaving) and 4 for each
@@ -21,7 +22,8 @@ Each part is scored 0-100, 50 being typical:
                       buying: 70. Net selling outside 10b5-1 plans worth over 0.5% of the company's market value: 35,
                       over 2%: 20.
   Value vs peers (15%) 50 + 50 x tanh(gap / 60%), where gap is fair value against price: at the peers' price 50, 30%
-                      below fair value about 73, 30% above about 27.
+                      below fair value about 73, 30% above about 27. Left out when the estimate is low confidence
+                      (the peers' range is over 3x wide).
 
 A part that couldn't be read is left out and the weights of the rest are scaled up to 100%; the grade says which.
 Letters: A 80+, B 65+, C 50+, D 35+, F below.
@@ -38,7 +40,10 @@ GOV_METRICS = {
     "Board Independence": (lambda g, pe: ((g.get("metrics") or {}).get("Board Independence") or {}).get("pct"), True),
     "Say-on-Pay Support": (lambda g, pe: ((g.get("metrics") or {}).get("Say-on-Pay Support") or {}).get("pct"), True),
     "CEO Pay Ratio": (lambda g, pe: ((g.get("metrics") or {}).get("CEO Pay Ratio") or {}).get("value"), False),
-    "Pay Efficiency": (lambda g, pe: pe.get("pct") if pe.get("available") and pe.get("denominator") == "operating" else None, False),
+    # Compensation actually paid can be negative when the stock falls (Super Micro FY2025: -$190M); a negative ratio isn't
+    # "efficient pay", so only positive values are placed against the sector
+    "Pay Efficiency": (lambda g, pe: pe.get("pct") if pe.get("available") and pe.get("denominator") == "operating"
+                       and (pe.get("pct") or 0) > 0 else None, False),
 }
 
 
@@ -112,6 +117,8 @@ def insiders_part(ins, market_cap):
 def valuation_part(val):
     if not val.get("available"):
         return None, val.get("reason") or "No fair value estimate."
+    if val.get("confidence") == "low":
+        return None, val["confidence_note"]
     gap = val["upside_pct"]
     return {"score": 50 + 50 * math.tanh(gap / 60), "upside_pct": gap, "verdict": val["verdict"],
             "fair_value": val["fair_value"], "price": val["price"]}, None

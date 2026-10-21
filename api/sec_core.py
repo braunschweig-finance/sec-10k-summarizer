@@ -897,6 +897,8 @@ VALUE_BALANCES = {
     "Debt (current)": ["DebtCurrent"],
     "Short-term Borrowings": ["ShortTermBorrowings"],
     "Commercial Paper": ["CommercialPaper"],
+    "Convertible Debt": ["ConvertibleNotesPayable", "ConvertibleDebtNoncurrent", "ConvertibleLongTermNotesPayable",
+                         "ConvertibleNotesPayableCurrent"],
 }
 VALUE_YEARS = 10  # enough history for the back-test, which starts in mid-2018
 
