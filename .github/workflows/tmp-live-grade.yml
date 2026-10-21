@@ -11,6 +11,7 @@ jobs:
         run: |
           API=https://sec-terminal-api.onrender.com
           curl -s --max-time 90 $API/health; echo
+          curl -s --max-time 90 $API/openapi.json | python3 -c "import sys,json;print(sorted(json.load(sys.stdin)['paths']))"
           # Wait for Render to deploy the merged code (the grade route answers 404 until then)
           for i in $(seq 1 40); do
             c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 $API/api/grade/ZZZZQ); echo "deploy check $i: $c"
