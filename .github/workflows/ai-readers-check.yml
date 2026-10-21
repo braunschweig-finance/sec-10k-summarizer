@@ -1,0 +1,39 @@
+# Live checks of earnings release tone and ask a filing, on GitHub's machines (they can reach SEC and the live site;
+# Claude's sandbox can't). Runs on pull requests that touch these files, and on demand from
+# Actions > AI readers check > Run workflow. It changes nothing on the live site.
+name: AI readers check
+
+on:
+  pull_request:
+    paths: ["api/earnings_tone.py", "api/ask_filing.py", "api/filing_text.py", "api/ai_routes.py",
+            "api/tests/live_check_ai_readers.py", ".github/workflows/ai-readers-check.yml"]
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers to check (blank = the default list)"
+        required: false
+      live_site:
+        description: "Ask the live site instead of reading SEC directly"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -q -r api/requirements.txt pytest
+      - name: Unit tests
+        working-directory: api
+        run: python -m pytest tests/test_ai_readers.py -q
+      - name: Live check
+        working-directory: api
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python tests/live_check_ai_readers.py ${{ inputs.live_site && '--live' || '' }} ${{ inputs.tickers }}
