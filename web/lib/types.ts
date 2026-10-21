@@ -145,3 +145,113 @@ export type Report = {
   // Set only on the built-in sample, which has numbers but no filing text
   sample?: { note: string; revenueHistory: { period: string; value_m: number }[] };
 };
+
+// ---------- Fair value from comparable companies (/api/valuation) ----------
+
+export type ValuationFigures = { Revenue: number | null; EBIT: number | null; EBITDA: number | null; "Net Income": number | null; "Book Equity": number | null };
+export type ValuationFeatures = { size: number | null; growth: number | null; margin: number | null; leverage: number | null };
+
+export type ValuationMethod = {
+  method: string;
+  figure: string;
+  company_figure: number | null;
+  company_multiple: number | null;
+  peer_count: number;
+  peer_median: number | null;
+  peer_p25: number | null;
+  peer_p75: number | null;
+  value: number | null;
+  low: number | null;
+  high: number | null;
+  used: boolean;
+  why_not?: string;
+};
+
+export type ValuationPeer = {
+  ticker: string;
+  name: string;
+  sic: string;
+  industry: string;
+  fy_end: string;
+  price: number;
+  price_date: string;
+  market_cap: number;
+  distance: number;
+  figures: ValuationFigures;
+  multiples: Record<string, number | null>;
+  features: ValuationFeatures;
+};
+
+export type BacktestCohort = {
+  formed: string;
+  companies: number;
+  all_return: number;
+  quintile_returns: number[];
+  quintile_medians: (number | null)[];
+  spread: number;
+  median_spread: number;
+  rank_correlation: number | null;
+  verdicts: Record<string, { count: number; return: number | null }>;
+};
+
+export type Backtest = {
+  method: string;
+  caveats: string[];
+  cohorts: BacktestCohort[];
+  years: number;
+  average: {
+    quintile_returns: number[];
+    spread: number | null;
+    spread_t: number | null;
+    spread_positive_years: number;
+    median_spread: number | null;
+    median_spread_positive_years: number;
+    rank_correlation: number | null;
+    rank_correlation_t: number | null;
+    undervalued_minus_overvalued: number | null;
+    undervalued_minus_overvalued_t: number | null;
+  };
+};
+
+export type SourceFact = { value: number; concept: string; accn: string; url: string };
+
+export type Valuation = {
+  ticker: string;
+  name: string;
+  available: boolean;
+  reason?: string;
+  source: string;
+  peers_built_at: string | null;
+  price_note: string;
+  backtest: Backtest | null;
+  fair_value?: number;
+  low?: number;
+  high?: number;
+  price?: number;
+  upside_pct?: number;
+  verdict?: "undervalued" | "fairly valued" | "overvalued";
+  methods?: ValuationMethod[];
+  peers?: ValuationPeer[];
+  notes?: string[];
+  company?: {
+    sic: string;
+    industry: string;
+    sector: string | null;
+    fy_end: string;
+    fiscal_year: number;
+    filed: string;
+    price: number;
+    price_date: string;
+    shares: number;
+    shares_source: string;
+    market_cap: number;
+    debt: number | null;
+    cash: number | null;
+    ev: number;
+    debt_parts: string[];
+    figures: ValuationFigures;
+    multiples: Record<string, number | null>;
+    features: ValuationFeatures;
+  };
+  sources?: Record<string, SourceFact>;
+};

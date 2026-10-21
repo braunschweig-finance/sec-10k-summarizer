@@ -19,7 +19,7 @@ URL = os.environ.get(
     "https://github.com/braunschweig-finance/sec-10k-summarizer/releases/download/prebuilt-data/prebuilt.tar.gz",
 )
 DIR = os.environ.get("PREBUILT_DIR", "/tmp/prebuilt")
-KINDS = ("company", "governance", "pay_efficiency", "trends", "risks", "red_flags", "insiders")
+KINDS = ("company", "governance", "pay_efficiency", "trends", "risks", "fundamentals", "red_flags", "insiders")
 # GitHub's release API says when the file was last published, so a new build is picked up within the hour even when
 # the API itself was redeployed (and loaded the old file) while the build was still running
 RELEASE_API = os.environ.get(
@@ -45,6 +45,10 @@ def get(kind, ticker):
 
 def benchmarks_path():
     return os.path.join(DIR, "benchmarks.json")
+
+
+def valuation_path():
+    return os.path.join(DIR, "valuation.json")
 
 
 def status():

@@ -8,17 +8,22 @@ import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
+import { AskFilingPanel, EarningsTonePanel } from "./ai_tools";
+import { FairValuePanel } from "./valuation";
 import { AlertsPanel } from "./alerts";
 import { QUICK } from "@/lib/tickers";
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
+  { id: "value", label: "Fair Value" },
   { id: "trends", label: "Trends" },
   { id: "compare", label: "Compare" },
   { id: "summary", label: "10-K Summary" },
   { id: "statements", label: "Statements" },
   { id: "governance", label: "Governance" },
   { id: "alerts", label: "Red Flags & Insiders" },
+  { id: "tone", label: "Earnings Tone" },
+  { id: "ask", label: "Ask the 10-K" },
   { id: "memo", label: "AI Memo" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -260,12 +265,15 @@ export default function Terminal() {
                   transition={{ duration: 0.25 }}
                 >
                   {tab === "ratios" && <RatiosPanel report={report} />}
+                  {tab === "value" && <FairValuePanel report={report} />}
                   {tab === "trends" && <TrendsPanel report={report} />}
                   {tab === "compare" && <ComparePanel report={report} />}
                   {tab === "summary" && <SummaryPanel report={report} />}
                   {tab === "statements" && <StatementsPanel report={report} />}
                   {tab === "governance" && <GovernancePanel report={report} />}
                   {tab === "alerts" && <AlertsPanel report={report} />}
+                  {tab === "tone" && <EarningsTonePanel report={report} />}
+                  {tab === "ask" && <AskFilingPanel report={report} />}
                   {tab === "memo" && <MemoPanel report={report} />}
                 </motion.div>
               </AnimatePresence>
