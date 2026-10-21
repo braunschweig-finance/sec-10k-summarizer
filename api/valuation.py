@@ -117,6 +117,8 @@ def build_row(fund, price, price_date, as_of=None):
         shares, shares_note = ni / g("Diluted EPS"), "Derived: net income / diluted EPS"
     if not shares or shares <= 0:
         return None
+    if ni is None and g("Diluted EPS") is not None:
+        ni = g("Diluted EPS") * shares
     debt, cash, debt_parts = debt_and_cash(year)
     equity, assets, liabilities = g("Shareholders' Equity"), g("Total Assets"), g("Total Liabilities")
     if liabilities is None and assets is not None and equity is not None:

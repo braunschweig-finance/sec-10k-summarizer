@@ -758,7 +758,7 @@ FACTS_CACHE_SIZE = 16
 def used_tags():
     return set(OP_TAGS + PRETAX_TAGS + ["InterestIncomeExpenseNet", "NoninterestIncome"]
                + [t for tags in TREND_TAGS.values() for t in tags]
-               + [t for tags in {**VALUE_FLOWS, **VALUE_BALANCES}.values() for t in tags])
+               + [t for tags in {**VALUE_FLOWS, **VALUE_BALANCES, **EXTRA_FLOWS}.values() for t in tags])
 
 
 FACT_UNITS = ("USD", "shares", "USD/shares")
@@ -873,13 +873,18 @@ def get_trends(ticker_symbol):
 VALUE_FLOWS = {
     "Revenue": TREND_TAGS["Revenue"],
     "Operating Income": OP_TAGS,
-    "Net Income": ["NetIncomeLoss"],
+    "Net Income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"],
     "Depreciation & Amortization": ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
-                                    "DepreciationAndAmortization"],
+                                    "DepreciationAndAmortization", "DepreciationAmortizationAndOther"],
     "Diluted Shares": ["WeightedAverageNumberOfDilutedSharesOutstanding"],
     "Diluted EPS": ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"],
 }
 FLOW_UNITS = {"Diluted Shares": "shares", "Diluted EPS": "USD/shares"}
+# Fallbacks when a company doesn't file the usual line: EBIT from pretax income plus interest expense (Exxon files no
+# operating income line), D&A from depreciation plus intangible amortization (Alphabet files them separately)
+EXTRA_FLOWS = {"Pretax Income": PRETAX_TAGS, "Interest Expense": ["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt"],
+               "Depreciation": ["Depreciation", "DepreciationNonproduction", "DepreciationOfPropertyPlantAndEquipment"],
+               "Amortization of Intangibles": ["AmortizationOfIntangibleAssets"]}
 VALUE_BALANCES = {
     "Total Assets": ["Assets"],
     "Total Liabilities": ["Liabilities"],
@@ -943,6 +948,20 @@ def valuation_year(gaap, cik, fy_end):
             filed.append(max(nii[3], nonint[3]))
     for name, tags in VALUE_BALANCES.items():
         keep(name, tenk_balance(gaap, tags, fy_end))
+
+    def derived(name, label, parts):
+        hits = [tenk_flow(gaap, EXTRA_FLOWS[p], fy_end) for p in parts]
+        if hits[0][0] is None:
+            return
+        used = [(p, h) for p, h in zip(parts, hits) if h[0] is not None]
+        values[name] = {"value": sum(h[0] for _, h in used), "concept": f"Derived: {' + '.join('us-gaap:' + h[1] for _, h in used)} ({label})",
+                        "accn": hits[0][2], "url": filing_folder(cik, hits[0][2])}
+        filed.append(max(h[3] for _, h in used))
+
+    if values["Operating Income"] is None:
+        derived("Operating Income", "pretax income + interest expense", ["Pretax Income", "Interest Expense"])
+    if values["Depreciation & Amortization"] is None:
+        derived("Depreciation & Amortization", "depreciation + amortization of intangibles", ["Depreciation", "Amortization of Intangibles"])
     return {"fy_end": fy_end, "fiscal_year": peers.fiscal_year(fy_end), "filed": max(filed) if filed else None, "values": values}
 
 
