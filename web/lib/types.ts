@@ -255,3 +255,29 @@ export type Valuation = {
   };
   sources?: Record<string, SourceFact>;
 };
+
+// ---------- Overall company grade (/api/grade) ----------
+
+export type GradeComponent = {
+  part: "governance" | "red_flags" | "insiders" | "valuation";
+  name: string;
+  weight: number;
+  used_weight: number;
+  score: number;
+  letter: string;
+  // The inputs behind each part, as grade.py returns them
+  details: Record<string, any>;
+};
+
+export type Grade = {
+  ticker: string;
+  name: string;
+  available: boolean;
+  reason?: string;
+  score?: number;
+  letter?: string;
+  components: GradeComponent[];
+  missing: { part: string; name: string; why: string }[];
+  method: string;
+  disclaimer: string;
+};
