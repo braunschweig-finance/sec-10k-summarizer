@@ -23,8 +23,10 @@ import ai_routes
 import benchmarks
 import export
 import governance_policies
+import insiders
 import prebuilt
 import prices
+import red_flags
 import sec_core
 import valuation
 from sec_core import DataUnavailable
@@ -161,11 +163,22 @@ def cached_risks(ticker):
 
 
 @lru_cache(maxsize=64)
+def cached_red_flags(ticker):
+    return _lookup("red_flags", "Red flags", red_flags.get_red_flags, ticker)
+
+
+@lru_cache(maxsize=64)
+def cached_insiders(ticker):
+    return _lookup("insiders", "Form 4", insiders.get_insider_trades, ticker)
+
+
+@lru_cache(maxsize=64)
 def cached_fundamentals(ticker):
     return _lookup("fundamentals", "Valuation inputs", sec_core.get_valuation_inputs, ticker)
 
 
-CACHES = (cached_financials, cached_governance, cached_pay_efficiency, cached_trends, cached_risks, cached_fundamentals)
+CACHES = (cached_financials, cached_governance, cached_pay_efficiency, cached_trends, cached_risks, cached_fundamentals,
+          cached_red_flags, cached_insiders)
 
 
 # SEC lookups run in worker threads so a slow or stuck one returns an error instead of hanging the page
@@ -250,6 +263,16 @@ def trends(ticker: str):
 @app.get("/api/risks/{ticker}")
 def risks(ticker: str):
     return lookup(cached_risks, ticker)
+
+
+@app.get("/api/red-flags/{ticker}")
+def red_flags_route(ticker: str):
+    return lookup(cached_red_flags, ticker)
+
+
+@app.get("/api/insiders/{ticker}")
+def insiders_route(ticker: str):
+    return lookup(cached_insiders, ticker)
 
 
 _quotes = {}  # ticker -> (fetched at, price, date); a fresh close every 15 minutes at most

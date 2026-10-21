@@ -10,6 +10,7 @@ import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
 import { AskFilingPanel, EarningsTonePanel } from "./ai_tools";
 import { FairValuePanel } from "./valuation";
+import { AlertsPanel } from "./alerts";
 import { QUICK } from "@/lib/tickers";
 
 const TABS = [
@@ -20,6 +21,7 @@ const TABS = [
   { id: "summary", label: "10-K Summary" },
   { id: "statements", label: "Statements" },
   { id: "governance", label: "Governance" },
+  { id: "alerts", label: "Red Flags & Insiders" },
   { id: "tone", label: "Earnings Tone" },
   { id: "ask", label: "Ask the 10-K" },
   { id: "memo", label: "AI Memo" },
@@ -269,6 +271,7 @@ export default function Terminal() {
                   {tab === "summary" && <SummaryPanel report={report} />}
                   {tab === "statements" && <StatementsPanel report={report} />}
                   {tab === "governance" && <GovernancePanel report={report} />}
+                  {tab === "alerts" && <AlertsPanel report={report} />}
                   {tab === "tone" && <EarningsTonePanel report={report} />}
                   {tab === "ask" && <AskFilingPanel report={report} />}
                   {tab === "memo" && <MemoPanel report={report} />}
