@@ -89,10 +89,10 @@ export function RatiosPanel({ report }: { report: Report }) {
           <span className="eyebrow">Latest fiscal year · $ millions</span>
         </div>
         <div className="overflow-x-auto rounded-2xl border border-line">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[520px] text-left text-sm">
             <thead className="bg-panel text-muted">
               <tr>
-                {["Input", "Value ($M)", "Filed line item", "XBRL concept", "Period"].map((h) => (
+                {["Input", "Value ($M)", "Filed line item", "Period"].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
                     {h}
                   </th>
@@ -104,8 +104,10 @@ export function RatiosPanel({ report }: { report: Report }) {
                 <motion.tr key={name} variants={rise} className="border-t border-line hover:bg-panel/70">
                   <td className="px-4 py-3 font-medium">{name}</td>
                   <td className="tnum px-4 py-3 font-mono text-brass">{hit ? fmtM(hit.value_m).slice(1) : "Not reported"}</td>
-                  <td className="px-4 py-3 text-muted">{hit?.label || (report.sample ? "Shown when live" : "")}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{hit?.concept || (report.sample ? "Shown when live" : "")}</td>
+                  <td className="px-4 py-3 text-muted" title={hit?.concept ? `XBRL tag: ${hit.concept}` : undefined}>
+                    {hit?.label || (report.sample ? "Shown when live" : "")}
+                    {hit?.concept.startsWith("Derived") && <span className="block text-xs">{hit.concept}</span>}
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-muted">{hit?.period}</td>
                 </motion.tr>
               ))}
@@ -114,7 +116,7 @@ export function RatiosPanel({ report }: { report: Report }) {
         </div>
         <p className="text-sm text-muted">
           N/A means the filing doesn&apos;t report that line on the face of its statements (banks have no gross profit or current assets, for
-          example). Derived inputs say so in the concept column.
+          example). Derived inputs say so under the line item. Hover a line item to see its XBRL tag; the Excel and PDF exports list every tag.
         </p>
       </div>
     </div>
@@ -127,8 +129,9 @@ function SourceLine({ label, value, concept, href, linkText }: { label: string; 
   return (
     <div className="flex flex-col gap-1 rounded-xl border border-line bg-ink/40 p-4">
       <span className="eyebrow">{label}</span>
-      <span className="tnum font-mono text-lg text-paper">{value}</span>
-      <span className="font-mono text-xs text-muted">{concept}</span>
+      <span className="tnum font-mono text-lg text-paper" title={`XBRL tag: ${concept}`}>
+        {value}
+      </span>
       {href && (
         <a href={href} target="_blank" rel="noreferrer" className="text-xs text-teal underline-offset-4 hover:underline">
           {linkText} ↗
