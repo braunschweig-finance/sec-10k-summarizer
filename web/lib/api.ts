@@ -7,7 +7,7 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, ""
 // fetch() throws a bare "Failed to fetch" when the API can't be reached or the server died mid-request
 // (a crash or restart sends no CORS headers, so the browser hides the real status). A quick /health check
 // tells "the server is down or starting" apart from "it's up, so this one request failed".
-async function callApi(path: string, init?: RequestInit) {
+export async function callApi(path: string, init?: RequestInit) {
   try {
     // Longer than the API's own 90-second SEC time limit, so its clearer error arrives first
     return await fetch(`${API_URL}${path}`, { ...init, signal: AbortSignal.timeout(150_000) });
@@ -25,7 +25,7 @@ async function callApi(path: string, init?: RequestInit) {
 
 // The API answers errors with {"detail": "..."}. Anything else (an HTML page from Render's proxy, say) means the
 // server itself was restarting or overloaded, not that the company's data is missing.
-async function errorText(res: Response, what: string) {
+export async function errorText(res: Response, what: string) {
   const detail = (await res.json().catch(() => null))?.detail;
   if (typeof detail === "string") return detail;
   if ([502, 503, 504].includes(res.status))

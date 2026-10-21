@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 import ai_client
+import ai_routes
 import benchmarks
 import export
 import governance_policies
@@ -51,6 +52,9 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# Earnings release tone and ask a filing (see ai_routes.py)
+app.include_router(ai_routes.router)
 
 
 def _timed(step, ticker, fn):
