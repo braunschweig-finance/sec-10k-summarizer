@@ -903,25 +903,29 @@ VALUE_YEARS = 10  # enough history for the back-test, which starts in mid-2018
 
 def tenk_balance(gaap, tags, fy_end):
     """First-filed 10-K year-end balance for fy_end: (value, tag, accession, filed date)."""
-    for tag in tags:
-        hits = [r for r in gaap.get(tag, {}).get("units", {}).get("USD", [])
-                if r.get("form") == "10-K" and "start" not in r and days_apart(r["end"], fy_end) <= 10]
-        if hits:
-            first = min(hits, key=lambda r: r["filed"])
-            return first["val"], tag, first["accn"], first["filed"]
-    return None, None, None, None
+    return _first_filed(gaap, tags, lambda r: "start" not in r and days_apart(r["end"], fy_end) <= 10)
+
+
+def _first_filed(gaap, tags, match, unit="USD"):
+    """The value as first reported: of all the tags, the 10-K row filed earliest (ties go to the earlier tag in the list).
+    A company that switched tags (most did for revenue in 2018) shows the new tag in later 10-Ks' comparative years,
+    which weren't public until then; the back-test must not see those early."""
+    best = None
+    for i, tag in enumerate(tags):
+        for r in gaap.get(tag, {}).get("units", {}).get(unit, []):
+            if r.get("form") == "10-K" and match(r) and (best is None or (r["filed"], i) < (best[0]["filed"], best[1])):
+                best = (r, i, tag)
+    if best is None:
+        return None, None, None, None
+    r, _, tag = best
+    return r["val"], tag, r["accn"], r["filed"]
 
 
 def tenk_flow(gaap, tags, fy_end, unit="USD"):
-    """tenk_value plus the filing date, so the back-test only uses numbers that were public at the time."""
-    for tag in tags:
-        hits = [r for r in gaap.get(tag, {}).get("units", {}).get(unit, [])
-                if r.get("form") == "10-K" and days_apart(r["end"], fy_end) <= 10
-                and "start" in r and 340 <= days_apart(r["start"], r["end"]) <= 390]
-        if hits:
-            first = min(hits, key=lambda r: r["filed"])
-            return first["val"], tag, first["accn"], first["filed"]
-    return None, None, None, None
+    """A full-year amount as first reported in a 10-K, with the filing date, so the back-test only uses numbers that were
+    public at the time: (value, tag, accession, filed date)."""
+    return _first_filed(gaap, tags, lambda r: days_apart(r["end"], fy_end) <= 10 and "start" in r
+                        and 340 <= days_apart(r["start"], r["end"]) <= 390, unit)
 
 
 def valuation_year(gaap, cik, fy_end):

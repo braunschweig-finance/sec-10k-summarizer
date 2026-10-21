@@ -136,3 +136,13 @@ def test_spearman_and_quintiles():
     assert s["quintile_returns"][0] == pytest.approx(0.085) and s["quintile_returns"][4] == pytest.approx(0.005)
     assert s["spread"] == pytest.approx(0.08) and s["rank_correlation"] == pytest.approx(1.0)
     assert s["verdicts"]["undervalued"]["count"] == 2
+
+
+def test_value_as_first_reported_across_tags():
+    import sec_core
+    row = lambda val, filed: {"val": val, "start": "2016-01-01", "end": "2016-12-31", "accn": filed, "filed": filed, "form": "10-K"}
+    # The newer revenue tag shows FY2016 only as a comparative in the 2019 10-K; the old tag was public in 2017
+    gaap = {"RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [row(105, "2019-02-26")]}},
+            "SalesRevenueNet": {"units": {"USD": [row(100, "2017-02-20"), row(101, "2018-02-20")]}}}
+    val, tag, _, filed = sec_core.tenk_flow(gaap, ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], "2016-12-31")
+    assert (val, tag, filed) == (100, "SalesRevenueNet", "2017-02-20")
