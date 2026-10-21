@@ -113,8 +113,11 @@ def build_row(fund, price, price_date, as_of=None):
     g = lambda n: _v(year, n)
     revenue, ebit, ni, da = g("Revenue"), g("Operating Income"), g("Net Income"), g("Depreciation & Amortization")
     shares, shares_note = g("Diluted Shares"), "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding"
-    if not shares and ni and g("Diluted EPS"):
-        shares, shares_note = ni / g("Diluted EPS"), "Derived: net income / diluted EPS"
+    implied = ni / g("Diluted EPS") if ni and g("Diluted EPS") else None
+    # A share count tagged in the wrong scale (McDonald's FY2025 tags 716.4 instead of 716.4 million) is caught by
+    # checking it against net income / diluted EPS, which should agree within rounding
+    if implied and implied > 0 and (not shares or not 0.8 <= shares / implied <= 1.25):
+        shares, shares_note = implied, "Derived: net income / diluted EPS"
     if not shares or shares <= 0:
         return None
     if ni is None and g("Diluted EPS") is not None:
@@ -242,6 +245,7 @@ PEER_KEYS = ("ticker", "name", "sic", "industry", "fy_end", "price", "price_date
 # ---------- Building the peer universe and the back-test (prebuild.py, on GitHub's machines) ----------
 
 BACKTEST_START = 2018
+MIN_COHORT = 50  # fewer companies valued on a formation date and that year is left out
 PRICE_START = date(BACKTEST_START, 6, 1)
 
 
@@ -348,10 +352,13 @@ def summarize_cohort(day, items):
     n = len(items)
     q = [items[i * n // 5:(i + 1) * n // 5] for i in range(5)]
     qret = [_mean([x["ret"] for x in g]) for g in q]
+    qmed = [peers.percentile(sorted(x["ret"] for x in g), 0.5) if g else None for g in q]
     by_verdict = {v: [x["ret"] for x in items if x["verdict"] == v] for v in ("undervalued", "fairly valued", "overvalued")}
     return {
         "formed": day.isoformat(), "companies": n, "all_return": _mean([x["ret"] for x in items]),
         "quintile_returns": qret, "spread": qret[0] - qret[4],
+        # Medians too: one stock that tripled can move a group's average a lot
+        "quintile_medians": qmed, "median_spread": qmed[0] - qmed[4],
         "rank_correlation": spearman([x["gap"] for x in items], [x["ret"] for x in items]),
         "verdicts": {v: {"count": len(r), "return": _mean(r)} for v, r in by_verdict.items()},
     }
@@ -359,7 +366,11 @@ def summarize_cohort(day, items):
 
 def backtest(funds, histories):
     last_day = max(h["days"][-1] for h in histories.values())
-    cohorts = [summarize_cohort(d, cohort(funds, histories, d)) for d in formation_dates(last_day)]
+    cohorts = []
+    for d in formation_dates(last_day):
+        items = cohort(funds, histories, d)
+        if len(items) >= MIN_COHORT:
+            cohorts.append(summarize_cohort(d, items))
     spreads = [c["spread"] for c in cohorts]
     ics = [c["rank_correlation"] for c in cohorts if c["rank_correlation"] is not None]
     under_minus_over = [c["verdicts"]["undervalued"]["return"] - c["verdicts"]["overvalued"]["return"] for c in cohorts
@@ -379,6 +390,8 @@ def backtest(funds, histories):
         "average": {
             "quintile_returns": [_mean([c["quintile_returns"][i] for c in cohorts]) for i in range(5)] if cohorts else [],
             "spread": _mean(spreads), "spread_t": _tstat(spreads), "spread_positive_years": sum(1 for s in spreads if s > 0),
+            "median_spread": _mean([c["median_spread"] for c in cohorts]),
+            "median_spread_positive_years": sum(1 for c in cohorts if c["median_spread"] > 0),
             "rank_correlation": _mean(ics), "rank_correlation_t": _tstat(ics),
             "undervalued_minus_overvalued": _mean(under_minus_over), "undervalued_minus_overvalued_t": _tstat(under_minus_over),
         },

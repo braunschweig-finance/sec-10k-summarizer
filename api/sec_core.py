@@ -906,26 +906,30 @@ def tenk_balance(gaap, tags, fy_end):
     return _first_filed(gaap, tags, lambda r: "start" not in r and days_apart(r["end"], fy_end) <= 10)
 
 
-def _first_filed(gaap, tags, match, unit="USD"):
-    """The value as first reported: of all the tags, the 10-K row filed earliest (ties go to the earlier tag in the list).
+def _first_filed(gaap, tags, match, unit="USD", largest=False, skip_zero=False):
+    """The value as first reported: of all the tags, the 10-K row filed earliest (ties go to the earlier tag in the list,
+    or with largest=True to the biggest value, so total revenue wins over a revenue sub-line tagged in the same filing).
     A company that switched tags (most did for revenue in 2018) shows the new tag in later 10-Ks' comparative years,
     which weren't public until then; the back-test must not see those early."""
     best = None
     for i, tag in enumerate(tags):
         for r in gaap.get(tag, {}).get("units", {}).get(unit, []):
-            if r.get("form") == "10-K" and match(r) and (best is None or (r["filed"], i) < (best[0]["filed"], best[1])):
-                best = (r, i, tag)
+            if r.get("form") != "10-K" or not match(r) or (skip_zero and not r["val"]):
+                continue
+            key = (r["filed"], -r["val"] if largest else 0, i)
+            if best is None or key < best[0]:
+                best = (key, r, tag)
     if best is None:
         return None, None, None, None
-    r, _, tag = best
+    _, r, tag = best
     return r["val"], tag, r["accn"], r["filed"]
 
 
-def tenk_flow(gaap, tags, fy_end, unit="USD"):
+def tenk_flow(gaap, tags, fy_end, unit="USD", largest=False):
     """A full-year amount as first reported in a 10-K, with the filing date, so the back-test only uses numbers that were
-    public at the time: (value, tag, accession, filed date)."""
+    public at the time: (value, tag, accession, filed date). A zero is skipped (Flowserve tags a $0 "Revenues" line)."""
     return _first_filed(gaap, tags, lambda r: days_apart(r["end"], fy_end) <= 10 and "start" in r
-                        and 340 <= days_apart(r["start"], r["end"]) <= 390, unit)
+                        and 340 <= days_apart(r["start"], r["end"]) <= 390, unit, largest=largest, skip_zero=True)
 
 
 def valuation_year(gaap, cik, fy_end):
@@ -941,7 +945,7 @@ def valuation_year(gaap, cik, fy_end):
         filed.append(when)
 
     for name, tags in VALUE_FLOWS.items():
-        keep(name, tenk_flow(gaap, tags, fy_end, FLOW_UNITS.get(name, "USD")))
+        keep(name, tenk_flow(gaap, tags, fy_end, FLOW_UNITS.get(name, "USD"), largest=name == "Revenue"))
     if values["Revenue"] is None:
         # Banks: net interest income + noninterest income, the same rule as the ratio cards and trends
         nii = tenk_flow(gaap, ["InterestIncomeExpenseNet"], fy_end)
