@@ -185,3 +185,13 @@ def test_tone_route_with_one_release(client, monkeypatch):
     monkeypatch.setattr(ai_routes, "sec_read", lambda step, fn, t: rel)
     body = client.get("/api/earnings-tone/NEWCO").json()
     assert body["available"] is False and body["latest"]["url"] == "u" and "text" not in body["latest"]
+
+
+def test_html_text_same_in_small_pieces():
+    html = ("<html><head><style>p {color: red}</style></head><body><ix:header>" + "<ix:hidden>junk</ix:hidden>" * 50 +
+            "</ix:header><p>Revenue rose 10% to $5.0 billion.</p><script>var x = '<p>no</p>';</script>"
+            "<table><tr><td>2027</td><td>$</td><td>1,500</td></tr></table><p>Caf&eacute; &amp; more</p></body></html>").encode()
+    whole = filing_text.html_text(html)
+    assert whole == "Revenue rose 10% to $5.0 billion.\n2027 $ 1,500\nCafé & more"
+    for size in (1, 3, 7, 16, 64):
+        assert filing_text.html_text(None, (html[i:i + size] for i in range(0, len(html), size))) == whole
