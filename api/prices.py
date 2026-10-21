@@ -47,3 +47,52 @@ def year_end_closes(ticker, fy_ends):
     if not any(y["close"] is not None for y in years):
         return {"available": False, "reason": "No trading prices around these fiscal year ends.", "source": SOURCE}
     return {"available": True, "source": SOURCE, "years": years}
+
+
+def history(ticker, first, last):
+    """Daily prices from first to last (date objects) for the fair value estimate and its back-test.
+
+    {"days": [date, ...], "close": [...], "adjclose": [...], "splits": [(date, ratio), ...]}. Yahoo's close is
+    adjusted for later stock splits; raw_close() undoes that, so it matches the share counts filed at the time.
+    adjclose is also adjusted for dividends, so a ratio of two adjcloses is a total return."""
+    p1 = int(datetime(first.year, first.month, first.day, tzinfo=timezone.utc).timestamp())
+    p2 = int(datetime(last.year, last.month, last.day, tzinfo=timezone.utc).timestamp()) + 86400
+    r = httpx.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                  params={"period1": p1, "period2": p2, "interval": "1d", "events": "split|div", "includeAdjustedClose": "true"},
+                  headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    result = r.json()["chart"]["result"][0]
+    offset = result["meta"].get("gmtoffset", 0)
+    quote = result["indicators"]["quote"][0]["close"]
+    adj = (result["indicators"].get("adjclose") or [{}])[0].get("adjclose") or quote
+    out = {"days": [], "close": [], "adjclose": [], "splits": []}
+    for ts, c, a in zip(result.get("timestamp", []), quote, adj):
+        if c is not None and a is not None:
+            out["days"].append(datetime.fromtimestamp(ts + offset, tz=timezone.utc).date())
+            out["close"].append(c)
+            out["adjclose"].append(a)
+    for s in (result.get("events") or {}).get("splits", {}).values():
+        if s.get("numerator") and s.get("denominator"):
+            out["splits"].append((datetime.fromtimestamp(s["date"] + offset, tz=timezone.utc).date(), s["numerator"] / s["denominator"]))
+    return out
+
+
+def on_or_before(hist, day, max_gap=7):
+    """Index of the last trading day on or before day (within max_gap days), or None."""
+    best = None
+    for i, d in enumerate(hist["days"]):
+        if d > day:
+            break
+        best = i
+    if best is None or (day - hist["days"][best]).days > max_gap:
+        return None
+    return best
+
+
+def raw_close(hist, i):
+    """The close on day i as it actually traded: Yahoo's split-adjusted close times every split after that day."""
+    factor = 1.0
+    for d, ratio in hist["splits"]:
+        if d > hist["days"][i]:
+            factor *= ratio
+    return hist["close"][i] * factor
