@@ -15,6 +15,8 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import benchmarks
+import insiders
+import red_flags
 import sec_core
 
 LOOKUPS = {
@@ -23,6 +25,8 @@ LOOKUPS = {
     "pay_efficiency": sec_core.get_pay_efficiency,
     "trends": sec_core.get_trends,
     "risks": sec_core.get_risk_summary,
+    "red_flags": red_flags.get_red_flags,
+    "insiders": insiders.get_insider_trades,
 }
 OUT = "prebuilt"
 WORKERS = int(os.environ.get("PREBUILD_WORKERS", "6"))
@@ -55,6 +59,11 @@ def main():
     shutil.rmtree(OUT, ignore_errors=True)
     os.makedirs(OUT)
     started, done, failures = time.time(), [], {}
+    try:
+        # One download of SEC's quarterly insider data sets instead of a request per Form 4 (see insiders.py)
+        insiders.prepare_bulk()
+    except Exception as e:
+        print(f"[insiders] data sets unavailable, reading Form 4s one by one: {e!r}", flush=True)
     with ProcessPoolExecutor(max_workers=WORKERS) as pool:
         for fut in as_completed([pool.submit(build_one, t) for t in tickers()]):
             ticker, saved, failed = fut.result()

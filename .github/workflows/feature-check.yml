@@ -35,6 +35,9 @@ jobs:
       - name: Live check against SEC EDGAR
         working-directory: api
         run: python tests/live_check.py ${{ inputs.tickers }}
+      - name: Live check of red flags and insider trades
+        working-directory: api
+        run: python tests/live_alerts.py ${{ inputs.tickers }}
 
   dry-run-prebuild:
     if: ${{ inputs.full_prebuild }}
@@ -51,7 +54,7 @@ jobs:
       - name: Full prebuild (not published)
         working-directory: api
         run: |
-          python prebuild.py > prebuild.log 2>&1 || (tail -50 prebuild.log; exit 1)
-          grep -v ": 5/5$" prebuild.log | grep -v "^\[" | tail -150
+          SEC_REQUESTS_PER_SECOND=1.5 python prebuild.py > prebuild.log 2>&1 || (tail -50 prebuild.log; exit 1)
+          grep -v ": 7/7$" prebuild.log | grep -v "^\[" | tail -150
           ls -la prebuilt.tar.gz
           python -c "import json; b=json.load(open('prebuilt/benchmarks.json')); print(json.dumps({k: {'companies': v['companies'], **{m: s and round(s['median'], 2) for m, s in v['metrics'].items()}} for k, v in {**b['sectors'], 'ALL': b['all']}.items()}, indent=1))"

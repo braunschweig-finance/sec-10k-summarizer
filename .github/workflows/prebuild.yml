@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
     paths: ["api/sec_core.py", "api/peers.py", "api/prebuild.py", "api/benchmarks.py", "api/governance_metrics.py",
-            "api/risk_factors.py", "api/prices.py", "api/sectors.py", "api/update_russell.py", "api/data/**", "api/requirements.txt"]
+            "api/risk_factors.py", "api/prices.py", "api/red_flags.py", "api/insiders.py", "api/sec_feed.py", "api/sectors.py", "api/update_russell.py", "api/data/**", "api/requirements.txt"]
   workflow_dispatch:
 
 permissions:
@@ -28,8 +28,10 @@ jobs:
       - name: Refresh the Russell 1000 list (keeps the committed one if Wikipedia can't be read)
         working-directory: api
         run: python update_russell.py
-      - name: Run the five lookups for every company
+      - name: Run the lookups for every company
         working-directory: api
+        # Six companies at once; this keeps the red flag and insider lookups' SEC requests under SEC's 10 a second
+        env: { SEC_REQUESTS_PER_SECOND: "1.5" }
         run: python prebuild.py
       - name: Publish as the prebuilt-data release
         env:

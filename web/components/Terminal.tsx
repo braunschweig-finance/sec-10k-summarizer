@@ -8,6 +8,7 @@ import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
+import { AlertsPanel } from "./alerts";
 import { QUICK } from "@/lib/tickers";
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   { id: "summary", label: "10-K Summary" },
   { id: "statements", label: "Statements" },
   { id: "governance", label: "Governance" },
+  { id: "alerts", label: "Red Flags & Insiders" },
   { id: "memo", label: "AI Memo" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -263,6 +265,7 @@ export default function Terminal() {
                   {tab === "summary" && <SummaryPanel report={report} />}
                   {tab === "statements" && <StatementsPanel report={report} />}
                   {tab === "governance" && <GovernancePanel report={report} />}
+                  {tab === "alerts" && <AlertsPanel report={report} />}
                   {tab === "memo" && <MemoPanel report={report} />}
                 </motion.div>
               </AnimatePresence>
