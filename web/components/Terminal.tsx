@@ -8,10 +8,12 @@ import { Aurora, TickerTape, WordReveal } from "./fx";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
+import { FairValuePanel } from "./valuation";
 import { QUICK } from "@/lib/tickers";
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
+  { id: "value", label: "Fair Value" },
   { id: "trends", label: "Trends" },
   { id: "compare", label: "Compare" },
   { id: "summary", label: "10-K Summary" },
@@ -258,6 +260,7 @@ export default function Terminal() {
                   transition={{ duration: 0.25 }}
                 >
                   {tab === "ratios" && <RatiosPanel report={report} />}
+                  {tab === "value" && <FairValuePanel report={report} />}
                   {tab === "trends" && <TrendsPanel report={report} />}
                   {tab === "compare" && <ComparePanel report={report} />}
                   {tab === "summary" && <SummaryPanel report={report} />}
