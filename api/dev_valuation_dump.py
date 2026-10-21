@@ -12,7 +12,7 @@ def one(t):
 if __name__ == "__main__":
     ts = prebuild.tickers()
     started = time.time()
-    with ProcessPoolExecutor(6) as pool:
+    with ProcessPoolExecutor(3) as pool:
         funds = dict(pool.map(one, ts))
     print("fundamentals", len(funds), time.time() - started, flush=True)
     ok = {t: f for t, f in funds.items() if "__unavailable__" not in f}

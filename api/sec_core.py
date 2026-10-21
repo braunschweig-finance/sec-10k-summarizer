@@ -8,6 +8,7 @@ app.py can't be imported directly because it runs the Streamlit page as soon as 
 import io
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import date
 import threading
@@ -549,7 +550,12 @@ PRETAX_TAGS = [
 
 
 def sec_fetch(url):
-    r = httpx.get(url, headers={"User-Agent": SEC_IDENTITY}, timeout=60, follow_redirects=True)
+    # SEC allows about 10 requests a second; when it says "too many" (429), wait and try again, a little longer each time
+    for wait in (2, 4, 8, 16, None):
+        r = httpx.get(url, headers={"User-Agent": SEC_IDENTITY}, timeout=60, follow_redirects=True)
+        if r.status_code != 429 or wait is None:
+            break
+        time.sleep(wait)
     r.raise_for_status()
     return r.content
 
@@ -768,7 +774,8 @@ def slim_facts(us_gaap):
             continue
         units = {}
         for unit in FACT_UNITS:
-            rows = [{k: r.get(k) for k in FACT_KEYS} for r in body.get("units", {}).get(unit, [])
+            # A year-end balance has no start date, and its row has no "start" key, as in companyfacts itself
+            rows = [{k: r[k] for k in FACT_KEYS if k in r} for r in body.get("units", {}).get(unit, [])
                     if r.get("form") == "10-K" and ("start" not in r or 340 <= days_apart(r["start"], r["end"]) <= 390)]
             if rows:
                 units[unit] = rows

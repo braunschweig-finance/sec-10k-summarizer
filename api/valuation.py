@@ -26,6 +26,7 @@ and that day's prices, and checks what each group of stocks returned over the ne
 import json
 import math
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
@@ -251,16 +252,19 @@ def formation_dates(last_price_day):
     return out
 
 
-def fetch_histories(tickers, today=None, workers=8):
+def fetch_histories(tickers, today=None, workers=4):
     """{ticker: prices.history} for every ticker Yahoo has; the rest are left out."""
     today = today or date.today()
 
     def one(t):
-        try:
-            return t, prices.history(t, PRICE_START, today)
-        except Exception as e:
-            print(f"[{t}] price history unavailable: {e!r}", flush=True)
-            return t, None
+        for attempt in range(3):
+            try:
+                return t, prices.history(t, PRICE_START, today)
+            except Exception as e:
+                if attempt == 2 or "404" in str(e):
+                    print(f"[{t}] price history unavailable: {e!r}", flush=True)
+                    return t, None
+                time.sleep(5 * (attempt + 1))  # usually Yahoo asking to slow down
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return {t: h for t, h in pool.map(one, tickers) if h and h["days"]}
@@ -410,3 +414,33 @@ def load(path):
         with open(path) as f:
             _cache.update(path=path, mtime=mtime, data=json.load(f))
     return _cache["data"]
+
+
+# ---------- The API's answer for one company ----------
+
+def report(fund, price, price_date, universe, price_note=""):
+    """Everything the Fair Value tab shows: the estimate, each method, the peers and why, the sources, the back-test."""
+    base = {"ticker": fund["ticker"], "name": fund.get("name", ""), "source": universe.get("source", SOURCE),
+            "peers_built_at": universe.get("built_at"), "backtest": universe.get("backtest"), "price_note": price_note}
+    target = build_row(fund, price, price_date)
+    if target is None:
+        return {**base, "available": False,
+                "reason": "The latest 10-K is missing revenue or a diluted share count in SEC's XBRL data, so the company can't be valued."}
+    year, _ = pick_years(fund)
+    est = value(target, universe["rows"])
+    notes = []
+    if not target["sane"]:
+        notes.append("The market value from the filed share count looks out of line with sales (often a company with several "
+                     "share classes that reports shares in another class). Treat this estimate with care.")
+    if target["debt"] is None:
+        notes.append("No debt is tagged in the 10-K, so debt is counted as zero.")
+    if target["sector"] is None:
+        notes.append("SEC's industry code for this company doesn't map to a sector, so peers come from the whole Russell 1000.")
+    sources = {name: hit for name, hit in year["values"].items() if hit}
+    return {
+        **base, **est, "notes": notes,
+        "company": {key: target[key] for key in ("sic", "industry", "sector", "fy_end", "fiscal_year", "filed", "price", "price_date",
+                                                 "shares", "shares_source", "market_cap", "debt", "cash", "ev", "debt_parts",
+                                                 "figures", "multiples", "features")},
+        "sources": sources,
+    }
