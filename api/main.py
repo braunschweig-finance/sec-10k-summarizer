@@ -22,6 +22,7 @@ import ai_client
 import ai_routes
 import benchmarks
 import export
+import grade
 import governance_policies
 import insiders
 import prebuilt
@@ -401,6 +402,40 @@ def write_memo(report):
     except ai_client.AIError as e:
         raise HTTPException(429 if e.busy else 503, str(e))
     return {"text": reply["text"], "usage": reply["usage"], "model": reply["model"]}
+
+
+@app.get("/api/grade/{ticker}")
+def company_grade(ticker: str):
+    """One overall grade from governance, red flags, insider trading and value vs peers (grade.py). Each part comes
+    from the same cached lookups as its own tab; a part that can't be read is left out and named."""
+    report = company(ticker)
+    parts, errors = {}, {}
+
+    def read(name, fn):
+        try:
+            return fn(ticker)
+        except HTTPException as e:
+            errors[name] = e.detail
+            return None
+
+    gov = read("governance", governance)
+    if gov is not None:
+        pay_eff = None
+        try:
+            pay_eff = pay_efficiency(ticker)
+        except HTTPException:
+            pass  # Pay Efficiency is one of four governance numbers; the others still count
+        parts["governance"] = (gov, pay_eff, report.get("benchmark"))
+    rf = read("red_flags", red_flags_route)
+    if rf is not None:
+        parts["red_flags"] = rf
+    val = read("valuation", fair_value)
+    if val is not None:
+        parts["valuation"] = val
+    ins = read("insiders", insiders_route)
+    if ins is not None:
+        parts["insiders"] = (ins, ((val or {}).get("company") or {}).get("market_cap"))
+    return grade.build(report["ticker"], report["name"], parts, errors)
 
 
 @app.get("/api/ai-status")

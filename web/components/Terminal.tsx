@@ -10,11 +10,13 @@ import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
 import { AskFilingPanel, EarningsTonePanel } from "./ai_tools";
 import { FairValuePanel } from "./valuation";
+import { GradePanel } from "./grade";
 import { AlertsPanel } from "./alerts";
 import { QUICK } from "@/lib/tickers";
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
+  { id: "grade", label: "Grade" },
   { id: "value", label: "Fair Value" },
   { id: "trends", label: "Trends" },
   { id: "compare", label: "Compare" },
@@ -265,6 +267,7 @@ export default function Terminal() {
                   transition={{ duration: 0.25 }}
                 >
                   {tab === "ratios" && <RatiosPanel report={report} />}
+                  {tab === "grade" && <GradePanel report={report} />}
                   {tab === "value" && <FairValuePanel report={report} />}
                   {tab === "trends" && <TrendsPanel report={report} />}
                   {tab === "compare" && <ComparePanel report={report} />}
