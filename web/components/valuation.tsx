@@ -40,7 +40,7 @@ export function FairValuePanel({ report }: { report: Report }) {
   }, [report.ticker, report.sample]);
 
   if (report.sample) return <p className="text-sm text-muted">The fair value estimate compares live prices across the Russell 1000, so it turns on once the API is online.</p>;
-  if (error) return <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">Fair value: {error}</p>;
+  if (error) return <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">Fair value: {error}</p>;
   if (!data)
     return (
       <div className="flex animate-pulse items-center gap-3 rounded border border-rule bg-sheet p-5 text-sm text-muted">
@@ -65,9 +65,9 @@ export function FairValuePanel({ report }: { report: Report }) {
       </p>
 
       <Headline v={data} />
-      {data.confidence_note && <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">{data.confidence_note}</p>}
+      {data.confidence_note && <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{data.confidence_note}</p>}
       {data.notes?.map((n) => (
-        <p key={n} className="rounded-sm border border-note/30 bg-note/10 px-4 py-3 text-sm text-note">{n}</p>
+        <p key={n} className="rounded-sm border-l-4 border-note bg-sheet px-4 py-3 text-sm text-note">{n}</p>
       ))}
 
       <Section title="How the value is built" note="median of the methods used">

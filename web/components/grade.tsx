@@ -38,7 +38,7 @@ export function GradePanel({ report }: { report: Report }) {
   }, [report.ticker, report.sample]);
 
   if (report.sample) return <p className="text-sm text-muted">The overall grade turns on once the API is online.</p>;
-  if (error) return <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">Grade: {error}</p>;
+  if (error) return <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">Grade: {error}</p>;
   if (!data)
     return (
       <div className="flex animate-pulse items-center gap-3 rounded border border-rule bg-sheet p-5 text-sm text-muted">

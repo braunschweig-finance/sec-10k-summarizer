@@ -68,7 +68,7 @@ export function SummaryPanel({ report }: { report: Report }) {
   const [open, setOpen] = useState<number | null>(null);
 
   if (report.sample) return <p className="text-sm text-muted">The 10-K summary reads each year&apos;s risk factors from SEC once the API is online.</p>;
-  if (report.risksError) return <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">10-K summary: {report.risksError}</p>;
+  if (report.risksError) return <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">10-K summary: {report.risksError}</p>;
   if (!r)
     return (
       <div className="flex animate-pulse items-center gap-3 rounded border border-rule bg-sheet p-5 text-sm text-muted">

@@ -145,7 +145,7 @@ function SourceLine({ label, value, concept, href, linkText }: { label: string; 
 
 // The project's own metric: how much of a year's operating income went to the CEO, by the SEC's "actually paid" measure
 function PayEfficiencyCard({ pe, error, bench }: { pe: PayEfficiency | null; error?: string; bench?: Benchmark | null }) {
-  if (error) return <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">Pay Efficiency: {error}</p>;
+  if (error) return <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">Pay Efficiency: {error}</p>;
   if (!pe)
     return (
       <div className="flex animate-pulse items-center gap-3 rounded border border-rule bg-sheet p-5 text-sm text-muted">
@@ -332,7 +332,7 @@ export function GovernancePanel({ report }: { report: Report }) {
 
   if (!g) {
     return report.governanceError ? (
-      <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">{report.governanceError}</p>
+      <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{report.governanceError}</p>
     ) : (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-muted">Reading the latest DEF 14A proxy statement. It&apos;s a long document, so this part can take a minute.</p>
@@ -533,7 +533,7 @@ export function MemoPanel({ report }: { report: Report }) {
           ))}
         </div>
       )}
-      {state.error && <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">{state.error}</p>}
+      {state.error && <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{state.error}</p>}
       {state.text && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4">
           <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-rule bg-sheet p-5 font-sans text-sm leading-relaxed">

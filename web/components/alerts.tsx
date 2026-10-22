@@ -77,7 +77,7 @@ function Waiting({ text }: { text: string }) {
   );
 }
 
-const Err = ({ text }: { text: string }) => <p className="rounded-sm border border-flag/30 bg-flag/10 px-4 py-3 text-sm text-flag">{text}</p>;
+const Err = ({ text }: { text: string }) => <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{text}</p>;
 
 // ---------- Tab ----------
 
