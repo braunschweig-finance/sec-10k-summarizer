@@ -1,0 +1,36 @@
+# Temporary: screenshots of the old and new design with live data. Lives only on branch tmp/design-shots.
+name: Design screenshots
+on:
+  push:
+    branches: [tmp/design-shots]
+permissions:
+  contents: write
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Wake the API
+        run: for i in 1 2 3 4 5 6; do curl -s -m 60 https://sec-terminal-api.onrender.com/health && break; sleep 10; done
+      - name: Build new and old site
+        env: { NEXT_PUBLIC_API_URL: "https://sec-terminal-api.onrender.com" }
+        run: |
+          git worktree add ../old origin/main
+          for d in web ../old/web; do (cd $d && npm ci --no-audit --no-fund && npx next build); done
+      - name: Screenshots
+        run: |
+          mkdir -p shots && cd .github/shots && npm init -y >/dev/null && npm i playwright@1.56.1 >/dev/null && npx playwright install --with-deps chromium >/dev/null
+          (cd ../../web/out && python3 -m http.server 3200 >/dev/null 2>&1 &)
+          (cd ../../../old/web/out && python3 -m http.server 3100 >/dev/null 2>&1 &)
+          sleep 2
+          node shoot.mjs after 3200 ../../shots
+          node shoot.mjs before 3100 ../../shots
+      - name: Commit screenshots to this branch
+        if: always()
+        run: |
+          git config user.name "github-actions" && git config user.email "github-actions@users.noreply.github.com"
+          git add shots && git commit -m "Design screenshots" && git push origin HEAD:tmp/design-shots
