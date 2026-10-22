@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { AnimatePresence, motion, useInView } from "motion/react";
+import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import type { Report } from "@/lib/types";
 import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchRisks, fetchTrends } from "@/lib/api";
-import { Aurora, TickerTape, WordReveal } from "./fx";
+import { Pipeline, TracedRatio } from "./landing";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
@@ -13,6 +13,10 @@ import { FairValuePanel } from "./valuation";
 import { GradePanel } from "./grade";
 import { AlertsPanel } from "./alerts";
 import { QUICK } from "@/lib/tickers";
+
+// Names for the example tickers, so the suggestion reads as a sentence
+const NAMES: Record<string, string> = { AAPL: "Apple", MSFT: "Microsoft", NVDA: "Nvidia", BE: "Bloom Energy" };
+const EXAMPLES = QUICK.map((t) => [t, NAMES[t] ?? t] as const);
 
 const TABS = [
   { id: "ratios", label: "Ratios" },
@@ -39,6 +43,14 @@ export default function Terminal() {
   const [tab, setTab] = useState<TabId>("ratios");
   const [slow, setSlow] = useState(false);
   const current = useRef("");
+  const results = useRef<HTMLElement>(null);
+
+  // Bring the report into view when a new company loads, so the answer to "Pull filings" is on screen
+  useEffect(() => {
+    if (!report) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    results.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, [report?.ticker]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load(sym: string) {
     const t = sym.toUpperCase().trim();
@@ -91,254 +103,178 @@ export default function Terminal() {
   }
 
   return (
-    <main className="min-h-screen">
-      {/* HERO */}
-      <section className="relative overflow-hidden">
-        <Aurora />
-        <div className="gutter relative mx-auto flex max-w-6xl flex-col gap-8 pt-16 pb-12 sm:pt-24">
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-2 rounded-full border border-line bg-panel/70 px-3 py-1 font-mono text-xs text-muted backdrop-blur">
-              <span className="relative flex h-2 w-2">
-                <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${API_URL ? "bg-teal" : "bg-brass"} opacity-60`} />
-                <span className={`relative inline-flex h-2 w-2 rounded-full ${API_URL ? "bg-teal" : "bg-brass"}`} />
-              </span>
-              {API_URL ? "Live · SEC EDGAR" : "Preview · sample data"}
-            </span>
-            <span className="eyebrow">Form 10-K · Form DEF 14A · XBRL</span>
-          </motion.div>
+    <MotionConfig reducedMotion="user">
+      <main className="min-h-screen">
+        <header className="border-b border-rule">
+          <div className="gutter mx-auto flex max-w-6xl flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-4">
+            <span className="font-display text-lg font-semibold">SEC Financial &amp; Corporate Governance Terminal</span>
+            <span className="caption">{API_URL ? "Reading live from SEC EDGAR" : "Preview: Caterpillar sample data only"}</span>
+          </div>
+        </header>
 
-          <h1 className="max-w-4xl text-5xl leading-[0.95] font-extrabold tracking-tight sm:text-7xl">
-            <WordReveal text="Read any company's filings like an analyst." accent="analyst." />
-          </h1>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.6 }}
-            className="max-w-xl text-lg leading-relaxed text-muted"
-          >
-            Audited statements, ratios you can trace to the exact filed line, and governance checks quoted straight from the proxy statement.
-          </motion.p>
+        {/* HERO: what the app does, shown on a real filing rather than described */}
+        <section className="gutter mx-auto grid max-w-6xl gap-12 pt-12 pb-16 sm:pt-16 lg:grid-cols-12 lg:gap-10">
+          <div className="flex flex-col gap-6 lg:col-span-5">
+            <h1 className="text-[2.5rem] leading-[1.05] font-extrabold sm:text-6xl">See the line in the 10‑K behind every ratio.</h1>
+            <p className="max-w-[34rem] text-lg leading-relaxed text-muted">
+              Type a ticker. The app pulls the company&apos;s latest 10‑K and proxy statement from SEC EDGAR, works out the ratios in plain
+              Python, and shows the filed line item each one came from. Gemini writes a memo at the end, but AI never produces a figure.
+            </p>
 
-          <motion.form
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.75 }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              load(ticker);
-            }}
-            className="flex max-w-xl flex-col gap-3"
-          >
-            <div className="group relative rounded-2xl p-px">
-              <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-brass via-violet to-teal opacity-50 blur-sm transition-opacity group-focus-within:opacity-100" />
-              <div className="relative flex items-center gap-2 rounded-2xl bg-ink p-2">
-                <label htmlFor="ticker" className="pl-3 font-mono text-sm text-muted">
-                  $
-                </label>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                load(ticker);
+              }}
+              className="flex flex-col gap-3"
+            >
+              <label htmlFor="ticker" className="text-sm font-medium">
+                Ticker symbol
+              </label>
+              <div className="flex max-w-md items-stretch border-2 border-ink focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ink">
                 <input
                   id="ticker"
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                  placeholder="Type a ticker, e.g. AAPL"
+                  placeholder={API_URL ? "AAPL" : "CAT"}
                   autoComplete="off"
                   spellCheck={false}
-                  className="min-w-0 flex-1 bg-transparent py-2 font-mono text-lg tracking-wider uppercase outline-none placeholder:text-muted/60"
+                  className="min-w-0 flex-1 bg-page px-4 py-3 text-xl font-semibold tracking-wide uppercase outline-none placeholder:font-normal placeholder:text-muted/50"
                 />
-                <motion.button
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  type="submit"
-                  className="rounded-xl bg-paper px-5 py-2.5 font-medium text-ink"
-                >
-                  {loading ? "Pulling…" : "Analyze"}
-                </motion.button>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted">Try</span>
-              {QUICK.map((q) => (
                 <button
-                  key={q}
-                  type="button"
-                  onClick={() => load(q)}
-                  className="rounded-full border border-line px-3 py-1 font-mono text-xs text-muted transition-colors hover:border-brass hover:text-paper"
+                  type="submit"
+                  disabled={loading}
+                  className="bg-ink px-5 font-medium text-page transition-colors duration-150 hover:bg-blue focus-visible:outline-offset-[-4px] focus-visible:outline-page disabled:opacity-70"
                 >
-                  {q}
+                  {loading ? "Pulling…" : "Pull filings"}
                 </button>
-              ))}
-            </div>
-          </motion.form>
+              </div>
+              <p className="text-sm text-muted">
+                {API_URL ? "Or try " : "The preview has one company: "}
+                {(API_URL ? EXAMPLES : [["CAT", "Caterpillar"]]).map(([sym, name], n, all) => (
+                  <span key={sym}>
+                    <button type="button" onClick={() => load(sym)} className="text-ink underline decoration-rule decoration-2 underline-offset-4 transition-colors duration-150 hover:decoration-mark">
+                      {name} ({sym})
+                    </button>
+                    {n < all.length - 2 ? ", " : n === all.length - 2 ? " or " : "."}
+                  </span>
+                ))}
+              </p>
+            </form>
 
-          <AnimatePresence>
-            {loading && slow && (
-              <motion.p
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="max-w-xl text-sm text-muted"
-                role="status"
-              >
-                Pulling {ticker}&apos;s 10-K and proxy from SEC EDGAR. A company's first search reads its filings from SEC and can take up to a minute; repeat searches are quick.
-              </motion.p>
-            )}
-            {error && (
-              <motion.p
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="max-w-xl rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose"
-                role="alert"
-              >
-                {error}
-              </motion.p>
-            )}
-          </AnimatePresence>
-        </div>
-      </section>
+            <AnimatePresence>
+              {loading && slow && (
+                <motion.p
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="max-w-md text-sm text-muted"
+                  role="status"
+                >
+                  Pulling {ticker}&apos;s 10-K and proxy from SEC EDGAR. A company&apos;s first search reads its filings from SEC and can take up to a
+                  minute; repeat searches are quick.
+                </motion.p>
+              )}
+              {error && (
+                <motion.p
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="max-w-md border-l-4 border-red bg-red/5 px-4 py-3 text-sm text-red"
+                  role="alert"
+                >
+                  {error}
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </div>
 
-      <TickerTape />
+          <div className="lg:col-span-7 lg:pt-2">
+            <TracedRatio />
+          </div>
+        </section>
 
-      {/* TERMINAL */}
-      <section className="gutter mx-auto flex max-w-6xl flex-col gap-8 py-14">
+        {/* REPORT */}
         <AnimatePresence mode="wait">
           {report && (
-            <motion.div
+            <motion.section
+              ref={results}
               key={report.ticker}
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.5 }}
-              className="flex flex-col gap-8"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              className="scroll-mt-4 border-t-2 border-ink"
             >
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <div className="flex flex-col gap-2">
-                  <span className="eyebrow">Now analyzing</span>
-                  <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-                    {report.name} <span className="font-mono text-2xl font-normal text-brass">{report.ticker}</span>
+              <div className="gutter mx-auto flex max-w-6xl flex-col gap-8 py-10">
+                <div className="flex flex-wrap items-end justify-between gap-4">
+                  <h2 className="text-4xl font-extrabold sm:text-5xl">
+                    {report.name} <span className="font-sans text-2xl font-normal text-muted">{report.ticker}</span>
                   </h2>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <ExportButtons ticker={report.ticker} />
-                  {report.tenk_url && (
-                    <a href={report.tenk_url} target="_blank" rel="noreferrer" className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass">
-                      10-K on EDGAR ↗
-                    </a>
-                  )}
-                  {report.governance?.proxy_url && (
-                    <a
-                      href={report.governance.proxy_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass"
-                    >
-                      DEF 14A on EDGAR ↗
-                    </a>
-                  )}
-                </div>
-              </div>
-
-              {report.sample && (
-                <p className="rounded-xl border border-brass/30 bg-brass/10 px-4 py-3 text-sm text-brass">{report.sample.note}</p>
-              )}
-
-              <div role="tablist" className="flex gap-1 overflow-x-auto rounded-2xl border border-line bg-panel p-1">
-                {TABS.map((t) => (
-                  <button
-                    key={t.id}
-                    role="tab"
-                    aria-selected={tab === t.id}
-                    onClick={() => setTab(t.id)}
-                    className={`relative flex-1 rounded-xl px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${tab === t.id ? "text-ink" : "text-muted hover:text-paper"}`}
-                  >
-                    {tab === t.id && (
-                      <motion.span layoutId="tab-pill" className="absolute inset-0 rounded-xl bg-brass" transition={{ type: "spring", bounce: 0.2, duration: 0.5 }} />
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                    <ExportButtons ticker={report.ticker} />
+                    {report.tenk_url && (
+                      <a href={report.tenk_url} target="_blank" rel="noreferrer" className="link">
+                        10-K on EDGAR
+                      </a>
                     )}
-                    <span className="relative font-medium">{t.label}</span>
-                  </button>
-                ))}
-              </div>
+                    {report.governance?.proxy_url && (
+                      <a href={report.governance.proxy_url} target="_blank" rel="noreferrer" className="link">
+                        DEF 14A on EDGAR
+                      </a>
+                    )}
+                  </div>
+                </div>
 
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={tab}
-                  initial={{ opacity: 0, x: 16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -16 }}
-                  transition={{ duration: 0.25 }}
-                >
-                  {tab === "ratios" && <RatiosPanel report={report} />}
-                  {tab === "grade" && <GradePanel report={report} />}
-                  {tab === "value" && <FairValuePanel report={report} />}
-                  {tab === "trends" && <TrendsPanel report={report} />}
-                  {tab === "compare" && <ComparePanel report={report} />}
-                  {tab === "summary" && <SummaryPanel report={report} />}
-                  {tab === "statements" && <StatementsPanel report={report} />}
-                  {tab === "governance" && <GovernancePanel report={report} />}
-                  {tab === "alerts" && <AlertsPanel report={report} />}
-                  {tab === "tone" && <EarningsTonePanel report={report} />}
-                  {tab === "ask" && <AskFilingPanel report={report} />}
-                  {tab === "memo" && <MemoPanel report={report} />}
-                </motion.div>
-              </AnimatePresence>
-            </motion.div>
+                {report.sample && <p className="border-l-4 border-mark bg-sheet px-4 py-3 text-sm">{report.sample.note}</p>}
+
+                <div role="tablist" aria-label="Report sections" className="-mx-4 flex overflow-x-auto border-b border-rule px-4 sm:mx-0 sm:px-0">
+                  {TABS.map((t) => (
+                    <button
+                      key={t.id}
+                      role="tab"
+                      aria-selected={tab === t.id}
+                      onClick={() => setTab(t.id)}
+                      className={`relative shrink-0 px-3 pt-2 pb-3 text-sm whitespace-nowrap transition-colors duration-150 ${tab === t.id ? "font-semibold text-ink" : "text-muted hover:text-ink"}`}
+                    >
+                      {tab === t.id && (
+                        <motion.span layoutId="tab-mark" aria-hidden className="absolute inset-x-1 bottom-0 h-[5px] bg-mark" transition={{ duration: 0.22, ease: [0.3, 0.7, 0.2, 1] }} />
+                      )}
+                      <span className="relative">{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <AnimatePresence mode="wait">
+                  <motion.div key={tab} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                    {tab === "ratios" && <RatiosPanel report={report} />}
+                    {tab === "grade" && <GradePanel report={report} />}
+                    {tab === "value" && <FairValuePanel report={report} />}
+                    {tab === "trends" && <TrendsPanel report={report} />}
+                    {tab === "compare" && <ComparePanel report={report} />}
+                    {tab === "summary" && <SummaryPanel report={report} />}
+                    {tab === "statements" && <StatementsPanel report={report} />}
+                    {tab === "governance" && <GovernancePanel report={report} />}
+                    {tab === "alerts" && <AlertsPanel report={report} />}
+                    {tab === "tone" && <EarningsTonePanel report={report} />}
+                    {tab === "ask" && <AskFilingPanel report={report} />}
+                    {tab === "memo" && <MemoPanel report={report} />}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </motion.section>
           )}
         </AnimatePresence>
-      </section>
 
-      <Pipeline />
+        <Pipeline />
 
-      <footer className="gutter mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-line py-8 text-sm text-muted">
-        <span>Built by Jacob Braunschweig · Data from SEC EDGAR</span>
-        <span className="font-mono text-xs">Numbers: Python · Memo: Gemini</span>
-      </footer>
-    </main>
-  );
-}
-
-const STEPS = [
-  { form: "10-K", title: "Pull the filing", body: "edgartools reads the latest annual report's XBRL straight from SEC EDGAR." },
-  { form: "XBRL", title: "Match exact line items", body: "Each ratio input comes from a named XBRL concept in the latest fiscal year, never a guess." },
-  { form: "Python", title: "Compute the ratios", body: "Plain Python does the math, so the same filing always gives the same answer." },
-  { form: "DEF 14A", title: "Read the proxy", body: "The proxy text is searched for board, pay and clawback topics, with the sentence quoted as proof." },
-  { form: "Gemini", title: "Write the memo", body: "AI only writes prose, from the numbers and quotes above. It never produces a figure." },
-];
-
-/** "How it works": the order is the real pipeline order, and the line draws as you scroll. */
-function Pipeline() {
-  const ref = useRef<HTMLOListElement>(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
-  return (
-    <section className="border-t border-line bg-panel/40">
-      <div className="gutter mx-auto flex max-w-6xl flex-col gap-8 py-14">
-        <div className="flex flex-col gap-2">
-          <span className="eyebrow">How it works</span>
-          <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">From filing to finding, in five steps</h2>
-        </div>
-        <ol ref={ref} className="relative grid gap-6 md:grid-cols-5">
-          <motion.div
-            aria-hidden
-            className="absolute top-4 left-4 hidden h-px origin-left bg-gradient-to-r from-brass via-violet to-teal md:block"
-            style={{ right: "1rem" }}
-            initial={{ scaleX: 0 }}
-            animate={{ scaleX: inView ? 1 : 0 }}
-            transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}
-          />
-          {STEPS.map((s, i) => (
-            <li key={s.title} className="relative flex flex-col gap-3">
-              <motion.span
-                className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-ink font-mono text-xs text-brass"
-                animate={inView ? { scale: [1, 1.25, 1] } : undefined}
-                transition={{ delay: 0.25 * i + 0.2, duration: 0.5 }}
-              >
-                {i + 1}
-              </motion.span>
-              <span className="font-mono text-xs text-muted">{s.form}</span>
-              <h3 className="text-lg font-bold">{s.title}</h3>
-              <p className="text-sm leading-relaxed text-muted">{s.body}</p>
-            </li>
-          ))}
-        </ol>
-      </div>
-    </section>
+        <footer className="gutter mx-auto flex max-w-6xl flex-wrap justify-between gap-x-8 gap-y-2 border-t border-rule py-8 text-sm text-muted">
+          <span>Built by Jacob Braunschweig. Data from SEC EDGAR.</span>
+          <span>Numbers: Python. Memo: Gemini.</span>
+        </footer>
+      </main>
+    </MotionConfig>
   );
 }

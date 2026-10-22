@@ -57,13 +57,13 @@ async function askFiling(ticker: string, question: string): Promise<Answer> {
 // ---------- Small shared pieces ----------
 
 function ErrorNote({ text }: { text: string }) {
-  return <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{text}</p>;
+  return <p className="rounded-xl border border-red/30 bg-red/10 px-4 py-3 text-sm text-red">{text}</p>;
 }
 
 function Pulse({ text }: { text: string }) {
   return (
-    <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
-      <span className="h-2 w-2 rounded-full bg-violet" /> {text}
+    <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-rule bg-sheet p-5 text-sm text-muted">
+      <span className="h-2 w-2 rounded-[3px] bg-ink" /> {text}
     </div>
   );
 }
@@ -72,7 +72,7 @@ function Pulse({ text }: { text: string }) {
 function Check({ ok }: { ok: boolean | null }) {
   if (ok === null) return null;
   return (
-    <span className={`ml-2 rounded-full px-2 py-0.5 font-mono text-[10px] whitespace-nowrap ${ok ? "bg-teal/15 text-teal" : "bg-rose/15 text-rose"}`}>
+    <span className={`ml-2 rounded-[3px] px-2 py-0.5 font-figures text-[10px] whitespace-nowrap ${ok ? "bg-green/15 text-green" : "bg-red/15 text-red"}`}>
       {ok ? "✓ in filing" : "✗ not found in filing"}
     </span>
   );
@@ -82,30 +82,30 @@ function Quote({ label, text, ok }: { label: string; text: string; ok: boolean |
   if (!text) return null;
   return (
     <p className={`text-sm leading-relaxed ${ok === false ? "text-muted/60" : "text-muted"}`}>
-      <span className="font-mono text-xs text-paper">{label}</span> “{text}”
+      <span className="font-figures text-xs text-ink">{label}</span> “{text}”
       <Check ok={ok} />
     </p>
   );
 }
 
 const TONE_STYLE: Record<string, { text: string; cls: string; arrow: string }> = {
-  "more confident": { text: "More confident", cls: "bg-teal/15 text-teal", arrow: "▲" },
-  "less confident": { text: "Less confident", cls: "bg-rose/15 text-rose", arrow: "▼" },
-  "about the same": { text: "About the same", cls: "bg-brass/15 text-brass", arrow: "●" },
+  "more confident": { text: "More confident", cls: "bg-green/15 text-green", arrow: "▲" },
+  "less confident": { text: "Less confident", cls: "bg-red/15 text-red", arrow: "▼" },
+  "about the same": { text: "About the same", cls: "bg-blue/15 text-blue", arrow: "●" },
 };
 
 const GUIDANCE_STYLE: Record<string, string> = {
-  raised: "bg-teal/15 text-teal",
-  introduced: "bg-teal/15 text-teal",
-  maintained: "bg-brass/15 text-brass",
-  mixed: "bg-brass/15 text-brass",
-  lowered: "bg-rose/15 text-rose",
-  withdrawn: "bg-rose/15 text-rose",
-  "not given": "bg-line text-muted",
+  raised: "bg-green/15 text-green",
+  introduced: "bg-green/15 text-green",
+  maintained: "bg-blue/15 text-blue",
+  mixed: "bg-blue/15 text-blue",
+  lowered: "bg-red/15 text-red",
+  withdrawn: "bg-red/15 text-red",
+  "not given": "bg-rule text-muted",
 };
 
 function Badge({ cls, children }: { cls: string; children: React.ReactNode }) {
-  return <span className={`rounded-full px-3 py-1 font-mono text-xs ${cls}`}>{children}</span>;
+  return <span className={`rounded-[3px] px-3 py-1 font-figures text-xs ${cls}`}>{children}</span>;
 }
 
 function OnlineOnly({ what }: { what: string }) {
@@ -136,15 +136,13 @@ export function EarningsTonePanel({ report }: { report: Report }) {
       </p>
       {!t && (
         <div>
-          <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
+          <button
             onClick={run}
             disabled={state.loading}
-            className="rounded-full bg-brass px-6 py-3 font-medium text-ink disabled:opacity-60"
+            className="rounded-[3px] bg-blue px-6 py-3 font-medium text-page disabled:opacity-60"
           >
             {state.loading ? "Reading both releases…" : "Compare the last two earnings releases"}
-          </motion.button>
+          </button>
         </div>
       )}
       {state.loading && <Pulse text="Finding both press releases on SEC EDGAR, then the AI compares them. Usually under a minute." />}
@@ -157,8 +155,8 @@ export function EarningsTonePanel({ report }: { report: Report }) {
 function ReleaseLink({ label, r }: { label: string; r: Release | null }) {
   if (!r) return null;
   return (
-    <a href={r.url || r.filing_url} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1.5 text-xs hover:border-brass">
-      {label}: filed <span className="font-mono">{r.filed}</span> ↗
+    <a href={r.url || r.filing_url} target="_blank" rel="noreferrer" className="rounded-[3px] border border-rule px-3 py-1.5 text-xs hover:border-blue">
+      {label}: filed <span className="font-figures">{r.filed}</span> ↗
     </a>
   );
 }
@@ -184,9 +182,9 @@ function ToneResult({ t }: { t: Tone }) {
   const wp = t.prior!.word_check;
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 rounded-2xl border border-line bg-panel p-5">
+      <div className="flex flex-col gap-3 rounded-2xl border border-rule bg-sheet p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="eyebrow">Management tone vs last quarter</span>
+          <span className="caption">Management tone vs last quarter</span>
           <Badge cls={style.cls}>
             {style.arrow} {style.text}
           </Badge>
@@ -195,7 +193,7 @@ function ToneResult({ t }: { t: Tone }) {
         {links}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-line bg-panel p-5">
+      <div className="flex flex-col gap-3 rounded-2xl border border-rule bg-sheet p-5">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-lg font-bold">Guidance</h3>
           <Badge cls={GUIDANCE_STYLE[g.change] || GUIDANCE_STYLE["not given"]}>{g.change}</Badge>
@@ -206,17 +204,17 @@ function ToneResult({ t }: { t: Tone }) {
       </div>
 
       {(t.shifts?.length ?? 0) > 0 && (
-        <div className="flex flex-col divide-y divide-line rounded-2xl border border-line">
+        <div className="flex flex-col divide-y divide-rule rounded-2xl border border-rule">
           {t.shifts!.map((s, i) => {
             const st = TONE_STYLE[s.direction];
             return (
               <div key={i} className={`flex flex-col gap-2 p-5 ${s.verified ? "" : "opacity-70"}`}>
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="font-medium capitalize">{s.topic}</span>
-                  <span className={`font-mono text-xs ${st.cls.split(" ")[1]}`}>
+                  <span className={`font-figures text-xs ${st.cls.split(" ")[1]}`}>
                     {st.arrow} {st.text}
                   </span>
-                  {!s.verified && <span className="font-mono text-xs text-rose">quote not confirmed, don&apos;t rely on this one</span>}
+                  {!s.verified && <span className="font-figures text-xs text-red">quote not confirmed, don&apos;t rely on this one</span>}
                 </div>
                 {s.why && <p className="text-sm">{s.why}</p>}
                 <Quote label="Now:" text={s.latest_quote} ok={s.latest_verified} />
@@ -229,11 +227,11 @@ function ToneResult({ t }: { t: Tone }) {
 
       <p className="text-xs leading-relaxed text-muted">
         Word check (plain count, no AI), per 1,000 words of narrative text: confident words{" "}
-        <span className="tnum font-mono text-paper">
+        <span className="tnum font-figures text-ink">
           {wp.confident_per_1000} → {wl.confident_per_1000}
         </span>
         , cautious words{" "}
-        <span className="tnum font-mono text-paper">
+        <span className="tnum font-figures text-ink">
           {wp.cautious_per_1000} → {wl.cautious_per_1000}
         </span>{" "}
         (prior → latest). AI reading by {t.model}
@@ -295,17 +293,15 @@ export function AskFilingPanel({ report }: { report: Report }) {
           onChange={(e) => setQuestion(e.target.value)}
           maxLength={300}
           placeholder="e.g. How much debt is due next year?"
-          className="min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 py-3 outline-none focus:border-brass"
+          className="min-w-0 flex-1 rounded-xl border border-rule bg-sheet px-4 py-3 outline-none focus:border-blue"
         />
-        <motion.button
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
+        <button
           type="submit"
           disabled={busy || question.trim().length < 5}
-          className="rounded-xl bg-brass px-6 py-3 font-medium text-ink disabled:opacity-60"
+          className="rounded-xl bg-blue px-6 py-3 font-medium text-page disabled:opacity-60"
         >
           {busy ? "Reading the 10-K…" : "Ask"}
-        </motion.button>
+        </button>
       </form>
       <div className="flex flex-wrap gap-2">
         {SUGGESTED.map((q) => (
@@ -314,7 +310,7 @@ export function AskFilingPanel({ report }: { report: Report }) {
             type="button"
             disabled={busy}
             onClick={() => ask(q)}
-            className="rounded-full border border-line px-3 py-1 text-xs text-muted transition-colors hover:border-brass hover:text-paper disabled:opacity-50"
+            className="rounded-[3px] border border-rule px-3 py-1 text-xs text-muted transition-colors hover:border-blue hover:text-ink disabled:opacity-50"
           >
             {q}
           </button>
@@ -331,11 +327,11 @@ export function AskFilingPanel({ report }: { report: Report }) {
 
 function AnswerCard({ a }: { a: Answer }) {
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-3 rounded-2xl border border-line bg-panel p-5">
-      <span className="font-mono text-xs text-brass">Q: {a.question}</span>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-3 rounded-2xl border border-rule bg-sheet p-5">
+      <span className="font-figures text-xs text-blue">Q: {a.question}</span>
       <p className="leading-relaxed">{a.answer}</p>
       {a.quote ? (
-        <p className={`border-l-2 pl-3 text-sm leading-relaxed ${a.verified ? "border-teal text-muted" : "border-rose text-muted/70"}`}>
+        <p className={`border-l-2 pl-3 text-sm leading-relaxed ${a.verified ? "border-green text-muted" : "border-red text-muted/70"}`}>
           “{a.quote}”
           <Check ok={a.verified} />
         </p>
@@ -343,10 +339,10 @@ function AnswerCard({ a }: { a: Answer }) {
         a.found === false && <p className="text-xs text-muted">No supporting quote: the 10-K passages searched don&apos;t answer this.</p>
       )}
       {a.quote && !a.verified && (
-        <p className="text-xs text-rose">The AI&apos;s quote wasn&apos;t found in the 10-K, so check the filing before relying on this answer.</p>
+        <p className="text-xs text-red">The AI&apos;s quote wasn&apos;t found in the 10-K, so check the filing before relying on this answer.</p>
       )}
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-        <a href={a.tenk_url} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 hover:border-brass">
+        <a href={a.tenk_url} target="_blank" rel="noreferrer" className="rounded-[3px] border border-rule px-3 py-1 hover:border-blue">
           10-K filed {a.tenk_date} ↗
         </a>
         {a.model && (
@@ -358,10 +354,10 @@ function AnswerCard({ a }: { a: Answer }) {
       </div>
       {a.excerpts.length > 0 && (
         <details className="text-xs text-muted">
-          <summary className="cursor-pointer hover:text-paper">The {a.excerpts.length} 10-K passages the AI read</summary>
+          <summary className="cursor-pointer hover:text-ink">The {a.excerpts.length} 10-K passages the AI read</summary>
           <div className="mt-2 flex max-h-72 flex-col gap-2 overflow-auto">
             {a.excerpts.map((e, i) => (
-              <p key={i} className="rounded-lg bg-ink/60 p-2 leading-relaxed">
+              <p key={i} className="rounded-lg bg-page/60 p-2 leading-relaxed">
                 [{i + 1}] {e}
               </p>
             ))}

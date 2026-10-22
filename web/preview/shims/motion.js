@@ -1,2 +1,13 @@
 const M = window.Motion;
-export const { motion, AnimatePresence, animate, useInView, useReducedMotion, useMotionValue, useSpring, useTransform } = M;
+export const {
+  motion,
+  AnimatePresence,
+  MotionConfig,
+  animate,
+  useInView,
+  useReducedMotion,
+  useMotionValue,
+  useScroll,
+  useSpring,
+  useTransform,
+} = M;

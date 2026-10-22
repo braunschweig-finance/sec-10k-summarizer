@@ -16,9 +16,9 @@ const signed = (n: number | null | undefined, d = 1) => (n === null || n === und
 const cache = new Map<string, Valuation>();
 
 const VERDICT_STYLE: Record<string, string> = {
-  undervalued: "border-teal/40 bg-teal/10 text-teal",
-  "fairly valued": "border-line bg-panel text-paper",
-  overvalued: "border-rose/40 bg-rose/10 text-rose",
+  undervalued: "border-green/40 bg-green/10 text-green",
+  "fairly valued": "border-rule bg-sheet text-ink",
+  overvalued: "border-red/40 bg-red/10 text-red",
 };
 
 export function FairValuePanel({ report }: { report: Report }) {
@@ -40,17 +40,17 @@ export function FairValuePanel({ report }: { report: Report }) {
   }, [report.ticker, report.sample]);
 
   if (report.sample) return <p className="text-sm text-muted">The fair value estimate compares live prices across the Russell 1000, so it turns on once the API is online.</p>;
-  if (error) return <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">Fair value: {error}</p>;
+  if (error) return <p className="rounded-xl border border-red/30 bg-red/10 px-4 py-3 text-sm text-red">Fair value: {error}</p>;
   if (!data)
     return (
-      <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
-        <span className="h-2 w-2 rounded-full bg-violet" /> Finding the closest peers and pricing the company like them…
+      <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-rule bg-sheet p-5 text-sm text-muted">
+        <span className="h-2 w-2 rounded-[3px] bg-ink" /> Finding the closest peers and pricing the company like them…
       </div>
     );
   if (!data.available)
     return (
       <div className="flex flex-col gap-5">
-        <p className="rounded-xl border border-line bg-panel px-4 py-3 text-sm text-muted">{data.reason}</p>
+        <p className="rounded-xl border border-rule bg-sheet px-4 py-3 text-sm text-muted">{data.reason}</p>
         {data.backtest && <BacktestCard bt={data.backtest} />}
       </div>
     );
@@ -65,9 +65,9 @@ export function FairValuePanel({ report }: { report: Report }) {
       </p>
 
       <Headline v={data} />
-      {data.confidence_note && <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{data.confidence_note}</p>}
+      {data.confidence_note && <p className="rounded-xl border border-red/30 bg-red/10 px-4 py-3 text-sm text-red">{data.confidence_note}</p>}
       {data.notes?.map((n) => (
-        <p key={n} className="rounded-xl border border-brass/30 bg-brass/10 px-4 py-3 text-sm text-brass">{n}</p>
+        <p key={n} className="rounded-xl border border-blue/30 bg-blue/10 px-4 py-3 text-sm text-blue">{n}</p>
       ))}
 
       <Section title="How the value is built" note="median of the methods used">
@@ -103,19 +103,19 @@ export function FairValuePanel({ report }: { report: Report }) {
               </tr>
             </thead>
             <tbody>
-              <tr className="border-t border-line bg-brass/5">
-                <td className="px-3 py-2 font-mono text-brass">{data.ticker}</td>
+              <tr className="border-t border-rule bg-blue/5">
+                <td className="px-3 py-2 font-figures text-blue">{data.ticker}</td>
                 <td className="px-3 py-2 text-xs text-muted">SIC {c.sic}</td>
                 <FeatureCells f={c.features} revenue={c.figures.Revenue} />
                 {["EV/EBITDA", "EV/EBIT", "EV/Sales", "P/E", "P/B"].map((k) => (
-                  <td key={k} className="tnum px-3 py-2 text-right font-mono text-brass">{mult(c.multiples[k])}</td>
+                  <td key={k} className="tnum px-3 py-2 text-right font-figures text-blue">{mult(c.multiples[k])}</td>
                 ))}
                 <td className="px-3 py-2 text-right text-xs text-muted">–</td>
               </tr>
               {data.peers!.map((p) => (
-                <tr key={p.ticker} className="border-t border-line hover:bg-panel/70">
+                <tr key={p.ticker} className="border-t border-rule hover:bg-sheet/70">
                   <td className="px-3 py-2">
-                    <span className="font-mono">{p.ticker}</span> <span className="text-xs text-muted">{p.name}</span>
+                    <span className="font-figures">{p.ticker}</span> <span className="text-xs text-muted">{p.name}</span>
                   </td>
                   <td className="px-3 py-2 text-xs text-muted">
                     SIC {p.sic}
@@ -123,9 +123,9 @@ export function FairValuePanel({ report }: { report: Report }) {
                   </td>
                   <FeatureCells f={p.features} revenue={p.figures.Revenue} />
                   {["EV/EBITDA", "EV/EBIT", "EV/Sales", "P/E", "P/B"].map((k) => (
-                    <td key={k} className="tnum px-3 py-2 text-right font-mono">{mult(p.multiples[k])}</td>
+                    <td key={k} className="tnum px-3 py-2 text-right font-figures">{mult(p.multiples[k])}</td>
                   ))}
-                  <td className="tnum px-3 py-2 text-right font-mono text-muted">{p.distance.toFixed(2)}</td>
+                  <td className="tnum px-3 py-2 text-right font-figures text-muted">{p.distance.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
@@ -149,25 +149,25 @@ function Headline({ v }: { v: Valuation }) {
   const hi = Math.max(v.high!, v.price!) * 1.15;
   const at = (x: number) => `${((x - lo) / (hi - lo)) * 100}%`;
   return (
-    <div className="grid gap-5 rounded-2xl border border-line bg-panel p-5 md:grid-cols-[1fr_1.4fr]">
+    <div className="grid gap-5 rounded-2xl border border-rule bg-sheet p-5 md:grid-cols-[1fr_1.4fr]">
       <div className="flex flex-col gap-3">
-        <span className={`w-fit rounded-full border px-3 py-1 font-mono text-xs uppercase tracking-wider ${VERDICT_STYLE[v.verdict!]}`}>
+        <span className={`w-fit rounded-[3px] border px-3 py-1 font-figures text-xs ${VERDICT_STYLE[v.verdict!]}`}>
           {v.verdict === "fairly valued" ? "Fairly valued vs peers" : `${v.verdict === "undervalued" ? "Undervalued" : "Overvalued"} vs peers`}
         </span>
         <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
           <div>
-            <div className="eyebrow">Fair value</div>
-            <div className="tnum font-mono text-4xl font-bold text-brass">{usd(v.fair_value)}</div>
-            <div className="tnum font-mono text-xs text-muted">range {usd(v.low)} – {usd(v.high)}</div>
+            <div className="caption">Fair value</div>
+            <div className="tnum font-figures text-4xl font-bold text-blue">{usd(v.fair_value)}</div>
+            <div className="tnum font-figures text-xs text-muted">range {usd(v.low)} – {usd(v.high)}</div>
           </div>
           <div>
-            <div className="eyebrow">Price</div>
-            <div className="tnum font-mono text-2xl">{usd(v.price)}</div>
-            <div className="font-mono text-xs text-muted">{v.company!.price_date}</div>
+            <div className="caption">Price</div>
+            <div className="tnum font-figures text-2xl">{usd(v.price)}</div>
+            <div className="font-figures text-xs text-muted">{v.company!.price_date}</div>
           </div>
           <div>
-            <div className="eyebrow">Gap</div>
-            <div className={`tnum font-mono text-2xl ${v.upside_pct! >= 0 ? "text-teal" : "text-rose"}`}>
+            <div className="caption">Gap</div>
+            <div className={`tnum font-figures text-2xl ${v.upside_pct! >= 0 ? "text-green" : "text-red"}`}>
               {v.upside_pct! >= 0 ? "+" : ""}
               {v.upside_pct!.toFixed(1)}%
             </div>
@@ -177,15 +177,15 @@ function Headline({ v }: { v: Valuation }) {
       </div>
       <div className="flex flex-col justify-center gap-2">
         <div className="relative h-10" aria-label={`Fair value range ${usd(v.low)} to ${usd(v.high)}, price ${usd(v.price)}`}>
-          <div className="absolute top-4 h-2 w-full rounded-full bg-line" />
-          <div className="absolute top-4 h-2 rounded-full bg-brass/50" style={{ left: at(v.low!), width: `calc(${at(v.high!)} - ${at(v.low!)})` }} />
-          <div className="absolute top-2 h-6 w-0.5 bg-brass" style={{ left: at(v.fair_value!) }} />
-          <div className="absolute top-1 h-8 w-1 -translate-x-1/2 rounded bg-paper" style={{ left: at(v.price!) }} />
+          <div className="absolute top-4 h-2 w-full rounded-[3px] bg-rule" />
+          <div className="absolute top-4 h-2 rounded-[3px] bg-blue/50" style={{ left: at(v.low!), width: `calc(${at(v.high!)} - ${at(v.low!)})` }} />
+          <div className="absolute top-2 h-6 w-0.5 bg-blue" style={{ left: at(v.fair_value!) }} />
+          <div className="absolute top-1 h-8 w-1 -translate-x-1/2 rounded bg-ink" style={{ left: at(v.price!) }} />
         </div>
         <div className="flex flex-wrap gap-4 text-xs text-muted">
-          <span className="flex items-center gap-2"><span className="h-2 w-4 rounded bg-brass/50" /> peer range</span>
-          <span className="flex items-center gap-2"><span className="h-3 w-0.5 bg-brass" /> fair value</span>
-          <span className="flex items-center gap-2"><span className="h-3 w-1 rounded bg-paper" /> price</span>
+          <span className="flex items-center gap-2"><span className="h-2 w-4 rounded bg-blue/50" /> peer range</span>
+          <span className="flex items-center gap-2"><span className="h-3 w-0.5 bg-blue" /> fair value</span>
+          <span className="flex items-center gap-2"><span className="h-3 w-1 rounded bg-ink" /> price</span>
         </div>
         <p className="text-xs text-muted">{v.price_note}</p>
       </div>
@@ -196,24 +196,24 @@ function Headline({ v }: { v: Valuation }) {
 function MethodRow({ m }: { m: ValuationMethod }) {
   if (!m.used)
     return (
-      <tr className="border-t border-line text-muted">
-        <td className="px-3 py-2 font-mono">{m.method}</td>
-        <td className="tnum px-3 py-2 text-right font-mono">{mult(m.company_multiple)}</td>
+      <tr className="border-t border-rule text-muted">
+        <td className="px-3 py-2 font-figures">{m.method}</td>
+        <td className="tnum px-3 py-2 text-right font-figures">{mult(m.company_multiple)}</td>
         <td colSpan={3} className="px-3 py-2 text-right text-xs">Not used: {m.why_not}</td>
       </tr>
     );
   return (
-    <tr className="border-t border-line">
-      <td className="px-3 py-2 font-mono">{m.method}</td>
-      <td className="tnum px-3 py-2 text-right font-mono">{mult(m.company_multiple)}</td>
-      <td className="tnum px-3 py-2 text-right font-mono">
+    <tr className="border-t border-rule">
+      <td className="px-3 py-2 font-figures">{m.method}</td>
+      <td className="tnum px-3 py-2 text-right font-figures">{mult(m.company_multiple)}</td>
+      <td className="tnum px-3 py-2 text-right font-figures">
         {mult(m.peer_median)} <span className="text-muted">({mult(m.peer_p25)}–{mult(m.peer_p75)}, {m.peer_count} peers)</span>
       </td>
-      <td className="tnum px-3 py-2 text-right font-mono">
+      <td className="tnum px-3 py-2 text-right font-figures">
         {usdM(m.company_figure)} <span className="text-xs text-muted">{m.figure}</span>
       </td>
-      <td className="tnum px-3 py-2 text-right font-mono">
-        <span className="text-brass">{usd(m.value)}</span> <span className="text-muted">({usd(m.low)}–{usd(m.high)})</span>
+      <td className="tnum px-3 py-2 text-right font-figures">
+        <span className="text-blue">{usd(m.value)}</span> <span className="text-muted">({usd(m.low)}–{usd(m.high)})</span>
       </td>
     </tr>
   );
@@ -222,10 +222,10 @@ function MethodRow({ m }: { m: ValuationMethod }) {
 function FeatureCells({ f, revenue }: { f: { growth: number | null; margin: number | null; leverage: number | null }; revenue: number | null }) {
   return (
     <>
-      <td className="tnum px-3 py-2 text-right font-mono">{usdM(revenue)}</td>
-      <td className="tnum px-3 py-2 text-right font-mono">{signed(f.growth)}</td>
-      <td className="tnum px-3 py-2 text-right font-mono">{pct(f.margin)}</td>
-      <td className="tnum px-3 py-2 text-right font-mono">{f.leverage === null ? "N/A" : f.leverage.toFixed(2)}</td>
+      <td className="tnum px-3 py-2 text-right font-figures">{usdM(revenue)}</td>
+      <td className="tnum px-3 py-2 text-right font-figures">{signed(f.growth)}</td>
+      <td className="tnum px-3 py-2 text-right font-figures">{pct(f.margin)}</td>
+      <td className="tnum px-3 py-2 text-right font-figures">{f.leverage === null ? "N/A" : f.leverage.toFixed(2)}</td>
     </>
   );
 }
@@ -246,13 +246,13 @@ function Sources({ v }: { v: Valuation }) {
           </thead>
           <tbody>
             {rows.map(([name, s]) => (
-              <tr key={name} className="border-t border-line">
+              <tr key={name} className="border-t border-rule">
                 <td className="px-3 py-2" title={s.concept}>{name}</td>
-                <td className="tnum px-3 py-2 text-right font-mono">
+                <td className="tnum px-3 py-2 text-right font-figures">
                   {name === "Diluted EPS" ? usd(s.value) : name === "Diluted Shares" ? `${(s.value / 1e6).toLocaleString("en-US", { maximumFractionDigits: 1 })}M` : usdM(s.value)}
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">
-                  <a href={s.url} target="_blank" rel="noreferrer" className="text-teal hover:underline">{s.accn} ↗</a>
+                <td className="px-3 py-2 font-figures text-xs">
+                  <a href={s.url} target="_blank" rel="noreferrer" className="text-green hover:underline">{s.accn} ↗</a>
                 </td>
               </tr>
             ))}
@@ -276,19 +276,19 @@ function BacktestCard({ bt }: { bt: Backtest }) {
       <p className="text-sm text-muted">{bt.method}</p>
       <div className="grid gap-3 sm:grid-cols-5">
         {q.map((r, i) => (
-          <div key={i} className={`rounded-xl border p-3 ${i === 0 ? "border-teal/40" : i === 4 ? "border-rose/40" : "border-line"}`}>
-            <div className="eyebrow">{i === 0 ? "Most undervalued" : i === 4 ? "Most overvalued" : `Group ${i + 1}`}</div>
-            <div className="tnum font-mono text-xl">{pct(r)}</div>
+          <div key={i} className={`rounded-xl border p-3 ${i === 0 ? "border-green/40" : i === 4 ? "border-red/40" : "border-rule"}`}>
+            <div className="caption">{i === 0 ? "Most undervalued" : i === 4 ? "Most overvalued" : `Group ${i + 1}`}</div>
+            <div className="tnum font-figures text-xl">{pct(r)}</div>
             <div className="text-xs text-muted">avg. next-12-month return</div>
           </div>
         ))}
       </div>
       <p className="text-sm">
-        Most undervalued minus most overvalued: <span className="tnum font-mono text-brass">{signed(a.spread)}</span> a year on average, positive in{" "}
+        Most undervalued minus most overvalued: <span className="tnum font-figures text-blue">{signed(a.spread)}</span> a year on average, positive in{" "}
         {a.spread_positive_years} of {bt.years} years (t = {a.spread_t?.toFixed(2) ?? "N/A"}). Rank correlation between the gap and the next year&apos;s
-        return: <span className="tnum font-mono">{a.rank_correlation?.toFixed(3) ?? "N/A"}</span> (t = {a.rank_correlation_t?.toFixed(2) ?? "N/A"}).{" "}
+        return: <span className="tnum font-figures">{a.rank_correlation?.toFixed(3) ?? "N/A"}</span> (t = {a.rank_correlation_t?.toFixed(2) ?? "N/A"}).{" "}
         Using each group&apos;s median return instead (so one stock that tripled can&apos;t drive it), the difference is{" "}
-        <span className="tnum font-mono">{signed(a.median_spread)}</span>, positive in {a.median_spread_positive_years} of {bt.years} years.{" "}
+        <span className="tnum font-figures">{signed(a.median_spread)}</span>, positive in {a.median_spread_positive_years} of {bt.years} years.{" "}
         {a.spread_t !== null && Math.abs(a.spread_t) < 2
           ? "With a t-value under 2, this difference could easily be chance."
           : "A t-value above 2 is the usual bar for a result that's unlikely to be chance."}
@@ -304,14 +304,14 @@ function BacktestCard({ bt }: { bt: Backtest }) {
           </thead>
           <tbody>
             {bt.cohorts.map((c) => (
-              <tr key={c.formed} className="border-t border-line">
-                <td className="px-3 py-2 font-mono text-xs">{c.formed}</td>
-                <td className="tnum px-3 py-2 text-right font-mono">{c.companies}</td>
-                <td className="tnum px-3 py-2 text-right font-mono">{pct(c.all_return)}</td>
-                <td className="tnum px-3 py-2 text-right font-mono">{pct(c.quintile_returns[0])}</td>
-                <td className="tnum px-3 py-2 text-right font-mono">{pct(c.quintile_returns[4])}</td>
-                <td className={`tnum px-3 py-2 text-right font-mono ${c.spread >= 0 ? "text-teal" : "text-rose"}`}>{signed(c.spread)}</td>
-                <td className="tnum px-3 py-2 text-right font-mono text-muted">{c.rank_correlation?.toFixed(3) ?? "N/A"}</td>
+              <tr key={c.formed} className="border-t border-rule">
+                <td className="px-3 py-2 font-figures text-xs">{c.formed}</td>
+                <td className="tnum px-3 py-2 text-right font-figures">{c.companies}</td>
+                <td className="tnum px-3 py-2 text-right font-figures">{pct(c.all_return)}</td>
+                <td className="tnum px-3 py-2 text-right font-figures">{pct(c.quintile_returns[0])}</td>
+                <td className="tnum px-3 py-2 text-right font-figures">{pct(c.quintile_returns[4])}</td>
+                <td className={`tnum px-3 py-2 text-right font-figures ${c.spread >= 0 ? "text-green" : "text-red"}`}>{signed(c.spread)}</td>
+                <td className="tnum px-3 py-2 text-right font-figures text-muted">{c.rank_correlation?.toFixed(3) ?? "N/A"}</td>
               </tr>
             ))}
           </tbody>
@@ -326,10 +326,10 @@ function BacktestCard({ bt }: { bt: Backtest }) {
 
 function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-5">
+    <div className="flex flex-col gap-4 rounded-2xl border border-rule bg-sheet p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-lg font-bold">{title}</h3>
-        {note && <span className="eyebrow">{note}</span>}
+        {note && <span className="caption">{note}</span>}
       </div>
       {children}
     </div>
