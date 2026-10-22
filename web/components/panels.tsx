@@ -4,20 +4,15 @@ import { useState } from "react";
 import { AnimatePresence, motion, type Variants } from "motion/react";
 import type { Benchmark, GovernanceMetrics, PayEfficiency, Report, Statement } from "@/lib/types";
 import { API_URL, downloadDocx, fetchMemo, saveBlob } from "@/lib/api";
-import { CountUp, onSpotlightMove } from "./fx";
+import { CountUp, Tick } from "./fx";
 import { PeerRank } from "./features";
 import { BenchLine } from "./bench";
 
 const fmtM = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
-const stagger: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.06 } },
-};
-const rise: Variants = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: [0.2, 0.7, 0.2, 1] as const } },
-};
+// Panels appear as they are: no staggered entrances. The variants stay so the markup keeps its structure.
+const stagger: Variants = { hidden: {}, show: {} };
+const rise: Variants = { hidden: {}, show: {} };
 
 // What each ratio divides, so every card can show its own arithmetic
 const RATIO_MATH: Record<string, { num: string; den: string; blurb: string }> = {
@@ -44,24 +39,22 @@ export function RatiosPanel({ report }: { report: Report }) {
             <motion.div
               key={name}
               variants={rise}
-              whileHover={{ y: -4 }}
-              onMouseMove={onSpotlightMove}
-              className="spotlight flex flex-col gap-3 rounded-2xl border border-line bg-panel p-5"
+              className="flex flex-col gap-3 rounded border border-rule bg-sheet p-5"
             >
               <div className="eyebrow">{name}</div>
-              <CountUp value={value} className="font-display text-4xl font-bold text-brass" />
+              <CountUp value={value} className="font-display text-4xl font-bold text-ink" />
               {pct !== null && (
-                <div className="h-1.5 overflow-hidden rounded-full bg-line">
+                <div className="h-1.5 overflow-hidden rounded-full bg-rule">
                   <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-brass to-teal"
-                    initial={{ width: 0 }}
+                    className="h-full rounded-full bg-ink"
+                    initial={false}
                     animate={{ width: `${pct}%` }}
                     transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
                   />
                 </div>
               )}
               {num && den && (
-                <div className="tnum font-mono text-xs text-muted">
+                <div className="tnum figures text-xs text-muted">
                   {fmtM(num.value_m)} ÷ {fmtM(den.value_m)} ($M)
                 </div>
               )}
@@ -88,9 +81,9 @@ export function RatiosPanel({ report }: { report: Report }) {
           <h3 className="text-xl font-bold">Where every number comes from</h3>
           <span className="eyebrow">Latest fiscal year · $ millions</span>
         </div>
-        <div className="overflow-x-auto rounded-2xl border border-line">
+        <div className="overflow-x-auto rounded border border-rule">
           <table className="w-full min-w-[520px] text-left text-sm">
-            <thead className="bg-panel text-muted">
+            <thead className="bg-sheet text-muted">
               <tr>
                 {["Input", "Value ($M)", "Filed line item", "Period"].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">
@@ -101,14 +94,23 @@ export function RatiosPanel({ report }: { report: Report }) {
             </thead>
             <motion.tbody variants={stagger} initial="hidden" animate="show">
               {Object.entries(report.inputs).map(([name, hit]) => (
-                <motion.tr key={name} variants={rise} className="border-t border-line hover:bg-panel/70">
+                <motion.tr key={name} variants={rise} className="border-t border-rule hover:bg-sheet/70">
                   <td className="px-4 py-3 font-medium">{name}</td>
-                  <td className="tnum px-4 py-3 font-mono text-brass">{hit ? fmtM(hit.value_m).slice(1) : "Not reported"}</td>
+                  <td className={`tnum px-4 py-3 figures ${hit?.concept.startsWith("Derived") ? "text-ink" : "text-input"}`}>
+                    {hit ? (
+                      <span className="inline-flex items-start gap-1">
+                        {fmtM(hit.value_m).slice(1)}
+                        {!hit.concept.startsWith("Derived") && <Tick />}
+                      </span>
+                    ) : (
+                      "Not reported"
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-muted" title={hit?.concept ? `XBRL tag: ${hit.concept}` : undefined}>
                     {hit?.label || (report.sample ? "Shown when live" : "")}
                     {hit?.concept.startsWith("Derived") && <span className="block text-xs">{hit.concept}</span>}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{hit?.period}</td>
+                  <td className="px-4 py-3 figures text-xs text-muted">{hit?.period}</td>
                 </motion.tr>
               ))}
             </motion.tbody>
@@ -116,7 +118,7 @@ export function RatiosPanel({ report }: { report: Report }) {
         </div>
         <p className="text-sm text-muted">
           N/A means the filing doesn&apos;t report that line on the face of its statements (banks have no gross profit or current assets, for
-          example). Derived inputs say so under the line item. Hover a line item to see its XBRL tag; the Excel and PDF exports list every tag.
+          example). Derived inputs say so under the line item. Blue figures with a tick are copied as filed; black figures above are calculated from them. Hover a line item to see its XBRL tag; the Excel and PDF exports list every tag.
         </p>
       </div>
     </div>
@@ -127,13 +129,13 @@ const fmtPay = (m: number) => `$${m.toLocaleString("en-US", { minimumFractionDig
 
 function SourceLine({ label, value, concept, href, linkText }: { label: string; value: string; concept: string; href: string; linkText: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-line bg-ink/40 p-4">
+    <div className="flex flex-col gap-1 rounded-sm border border-rule bg-page/40 p-4">
       <span className="eyebrow">{label}</span>
-      <span className="tnum font-mono text-lg text-paper" title={`XBRL tag: ${concept}`}>
+      <span className="tnum figures text-lg text-ink" title={`XBRL tag: ${concept}`}>
         {value}
       </span>
       {href && (
-        <a href={href} target="_blank" rel="noreferrer" className="text-xs text-teal underline-offset-4 hover:underline">
+        <a href={href} target="_blank" rel="noreferrer" className="text-xs text-input underline-offset-4 hover:underline">
           {linkText} ↗
         </a>
       )}
@@ -143,16 +145,16 @@ function SourceLine({ label, value, concept, href, linkText }: { label: string; 
 
 // The project's own metric: how much of a year's operating income went to the CEO, by the SEC's "actually paid" measure
 function PayEfficiencyCard({ pe, error, bench }: { pe: PayEfficiency | null; error?: string; bench?: Benchmark | null }) {
-  if (error) return <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">Pay Efficiency: {error}</p>;
+  if (error) return <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">Pay Efficiency: {error}</p>;
   if (!pe)
     return (
-      <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
-        <span className="h-2 w-2 rounded-full bg-violet" /> Reading CEO pay from the proxy&apos;s Pay Versus Performance table…
+      <div className="flex animate-pulse items-center gap-3 rounded border border-rule bg-sheet p-5 text-sm text-muted">
+        <span className="h-2 w-2 rounded-full bg-orig" /> Reading CEO pay from the proxy&apos;s Pay Versus Performance table…
       </div>
     );
   if (!pe.available)
     return (
-      <div className="rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
+      <div className="rounded border border-rule bg-sheet p-5 text-sm text-muted">
         <span className="eyebrow mr-2">Pay Efficiency</span>
         {pe.reason}
       </div>
@@ -164,24 +166,23 @@ function PayEfficiencyCard({ pe, error, bench }: { pe: PayEfficiency | null; err
       variants={rise}
       initial="hidden"
       animate="show"
-      onMouseMove={onSpotlightMove}
-      className="spotlight relative flex flex-col gap-5 overflow-hidden rounded-2xl border border-violet/40 bg-panel p-6"
+      className="relative flex flex-col gap-5 overflow-hidden rounded border border-orig/40 bg-sheet p-6"
     >
       <div className="flex flex-wrap items-start justify-between gap-6">
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <span className="eyebrow">Pay Efficiency · {fy}</span>
-            <span className="rounded-full border border-violet/50 bg-violet/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet">
+            <span className="rounded-sm border border-orig/50 bg-orig/15 px-2 py-0.5 text-xs font-medium text-orig">
               Original metric
             </span>
           </div>
-          <CountUp value={pe.value} className="font-display text-5xl font-bold text-violet" />
+          <CountUp value={pe.value} className="font-display text-5xl font-bold text-orig" />
           {pct !== null && (
-            <div className="h-1.5 w-56 overflow-hidden rounded-full bg-line">
+            <div className="h-1.5 w-56 overflow-hidden rounded-full bg-rule">
               {/* scaled so 5% fills the bar; most large companies sit well under it */}
               <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-violet to-brass"
-                initial={{ width: 0 }}
+                className="h-full rounded-full bg-orig"
+                initial={false}
                 animate={{ width: `${Math.min(100, (pct / 5) * 100)}%` }}
                 transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
               />
@@ -211,14 +212,14 @@ function PayEfficiencyCard({ pe, error, bench }: { pe: PayEfficiency | null; err
         />
       </div>
 
-      <div className="tnum font-mono text-xs text-muted">
+      <div className="tnum figures text-xs text-muted">
         {fmtPay(pe.ceo_pay_m)} ÷ {pe.op_income_m === null ? "?" : `${fmtM(pe.op_income_m)}M`} = {pe.value}
         {pe.sct_total_m !== null && <> · Summary Compensation Table total: {fmtPay(pe.sct_total_m)}</>}
       </div>
       <BenchLine bench={bench} metric="Pay Efficiency" value={pe.value} lowerIsBetter />
       <PeerRank pe={pe} />
       {pe.flags.length > 0 && (
-        <ul className="flex flex-col gap-1 text-xs text-brass">
+        <ul className="flex flex-col gap-1 text-xs text-note">
           {pe.flags.map((f) => (
             <li key={f}>⚑ {f}</li>
           ))}
@@ -230,13 +231,13 @@ function PayEfficiencyCard({ pe, error, bench }: { pe: PayEfficiency | null; err
 
 function StatementTable({ st }: { st: Statement }) {
   return (
-    <div className="overflow-x-auto rounded-2xl border border-line">
+    <div className="overflow-x-auto rounded border border-rule">
       <table className="w-full min-w-[560px] text-sm">
-        <thead className="bg-panel text-muted">
+        <thead className="bg-sheet text-muted">
           <tr>
             <th className="px-4 py-3 text-left font-medium">Line item</th>
             {st.periods.map((p) => (
-              <th key={p} className="px-4 py-3 text-right font-mono text-xs font-medium">
+              <th key={p} className="px-4 py-3 text-right figures text-xs font-medium">
                 {p}
               </th>
             ))}
@@ -244,10 +245,10 @@ function StatementTable({ st }: { st: Statement }) {
         </thead>
         <motion.tbody variants={stagger} initial="hidden" animate="show">
           {st.rows.map((r, i) => (
-            <motion.tr key={i} variants={rise} className="border-t border-line hover:bg-panel/70">
+            <motion.tr key={i} variants={rise} className="border-t border-rule hover:bg-sheet/70">
               <td className="px-4 py-2.5">{r.label}</td>
               {r.values.map((v, j) => (
-                <td key={j} className="tnum px-4 py-2.5 text-right font-mono">
+                <td key={j} className="tnum px-4 py-2.5 text-right figures">
                   {v}
                 </td>
               ))}
@@ -262,7 +263,7 @@ function StatementTable({ st }: { st: Statement }) {
 function RevenueBars({ history }: { history: { period: string; value_m: number }[] }) {
   const max = Math.max(...history.map((h) => h.value_m));
   return (
-    <div className="rounded-2xl border border-line bg-panel p-5">
+    <div className="rounded border border-rule bg-sheet p-5">
       <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-lg font-bold">Total sales and revenues</h3>
         <span className="eyebrow">$ millions · bars start at zero</span>
@@ -270,14 +271,14 @@ function RevenueBars({ history }: { history: { period: string; value_m: number }
       <div className="flex h-56 items-end gap-4 sm:gap-8">
         {history.map((h, i) => (
           <div key={h.period} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
-            <CountUp value={fmtM(h.value_m)} className="font-mono text-sm text-paper" />
+            <CountUp value={fmtM(h.value_m)} className="figures text-sm text-ink" />
             <motion.div
-              className={`w-full max-w-28 rounded-t-lg ${i === history.length - 1 ? "bg-gradient-to-t from-brass/60 to-brass" : "bg-line"}`}
-              initial={{ height: 0 }}
+              className={`w-full max-w-28 rounded-t-lg ${i === history.length - 1 ? "bg-input" : "bg-rule"}`}
+              initial={false}
               animate={{ height: `${(h.value_m / max) * 80}%` }}
               transition={{ duration: 1, delay: 0.15 * i, ease: [0.16, 1, 0.3, 1] }}
             />
-            <span className="font-mono text-xs text-muted">{h.period}</span>
+            <span className="figures text-xs text-muted">{h.period}</span>
           </div>
         ))}
       </div>
@@ -301,10 +302,10 @@ export function StatementsPanel({ report }: { report: Report }) {
           <button
             key={key}
             onClick={() => setView(key)}
-            className={`relative rounded-full px-4 py-1.5 text-sm transition-colors ${view === key ? "text-ink" : "text-muted hover:text-paper"}`}
+            className={`relative rounded-sm px-4 py-1.5 text-sm transition-colors ${view === key ? "text-page" : "text-muted hover:text-ink"}`}
           >
             {view === key && (
-              <motion.span layoutId="stmt-pill" className="absolute inset-0 rounded-full bg-paper" transition={{ type: "spring", bounce: 0.25, duration: 0.5 }} />
+              <motion.span layoutId="stmt-pill" className="absolute inset-0 rounded-full bg-ink" transition={{ type: "spring", bounce: 0.25, duration: 0.5 }} />
             )}
             <span className="relative">{label}</span>
           </button>
@@ -331,7 +332,7 @@ export function GovernancePanel({ report }: { report: Report }) {
 
   if (!g) {
     return report.governanceError ? (
-      <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{report.governanceError}</p>
+      <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{report.governanceError}</p>
     ) : (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-muted">Reading the latest DEF 14A proxy statement. It&apos;s a long document, so this part can take a minute.</p>
@@ -339,7 +340,7 @@ export function GovernancePanel({ report }: { report: Report }) {
           {[0, 1, 2, 3].map((i) => (
             <motion.div
               key={i}
-              className="h-28 rounded-2xl border border-line bg-panel"
+              className="h-28 rounded border border-rule bg-sheet"
               animate={{ opacity: [0.4, 0.9, 0.4] }}
               transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.15 }}
             />
@@ -355,8 +356,8 @@ export function GovernancePanel({ report }: { report: Report }) {
   return (
     <div className="flex flex-col gap-6">
       <p className="text-sm text-muted">
-        Latest DEF 14A filed <span className="font-mono text-paper">{g.proxy_date}</span>, with{" "}
-        <span className="tnum font-mono text-paper">{g.proxy_chars.toLocaleString("en-US")}</span> characters read from {g.proxy_source}. Each tile
+        Latest DEF 14A filed <span className="figures text-ink">{g.proxy_date}</span>, with{" "}
+        <span className="tnum figures text-ink">{g.proxy_chars.toLocaleString("en-US")}</span> characters read from {g.proxy_source}. Each tile
         says whether the proxy discusses the topic; the quote underneath is the proof.
       </p>
       {g.metrics && <GovernanceNumbers m={g.metrics} bench={report.benchmark} proxyUrl={g.proxy_url} />}
@@ -367,8 +368,7 @@ export function GovernancePanel({ report }: { report: Report }) {
             <motion.div
               key={check}
               variants={rise}
-              onMouseMove={onSpotlightMove}
-              className="spotlight flex flex-col gap-3 rounded-2xl border border-line bg-panel p-5"
+              className="flex flex-col gap-3 rounded border border-rule bg-sheet p-5"
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">{check}</span>
@@ -376,13 +376,13 @@ export function GovernancePanel({ report }: { report: Report }) {
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   transition={{ type: "spring", stiffness: 400, damping: 14, delay: 0.4 }}
-                  className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-xs ${found ? "bg-teal/15 text-teal" : "bg-rose/15 text-rose"}`}
+                  className={`flex items-center gap-1.5 rounded-sm px-2.5 py-1 figures text-xs ${found ? "bg-pass/15 text-pass" : "bg-flag/15 text-flag"}`}
                 >
-                  <span className={`h-1.5 w-1.5 rounded-full ${found ? "bg-teal" : "bg-rose"}`} />
+                  <span className={`h-1.5 w-1.5 rounded-full ${found ? "bg-pass" : "bg-flag"}`} />
                   {found ? "Discussed" : "Not found"}
                 </motion.span>
               </div>
-              <p className="text-sm leading-relaxed text-muted">
+              <p className={`text-sm leading-relaxed text-muted ${evidence ? "filed" : ""}`}>
                 {evidence
                   ? `“${evidence}”`
                   : found
@@ -395,16 +395,16 @@ export function GovernancePanel({ report }: { report: Report }) {
       </motion.div>
 
       {sections.length > 0 && (
-        <div className="flex flex-col divide-y divide-line rounded-2xl border border-line">
+        <div className="flex flex-col divide-y divide-rule rounded border border-rule">
           {sections.map(([heading, body]) => (
             <div key={heading}>
               <button
                 onClick={() => setOpen(open === heading ? null : heading)}
-                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-panel/70"
+                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-sheet/70"
                 aria-expanded={open === heading}
               >
                 <span className="font-medium">{heading}</span>
-                <motion.span animate={{ rotate: open === heading ? 45 : 0 }} className="text-xl text-brass">
+                <motion.span animate={{ rotate: open === heading ? 45 : 0 }} className="text-xl text-muted">
                   +
                 </motion.span>
               </button>
@@ -463,15 +463,15 @@ function GovernanceNumbers({ m, bench, proxyUrl }: { m: GovernanceMetrics; bench
     <div className="flex flex-col gap-3">
       <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-4 md:grid-cols-3">
         {cards.map((c) => (
-          <motion.div key={c.name} variants={rise} onMouseMove={onSpotlightMove} className="spotlight flex flex-col gap-2 rounded-2xl border border-line bg-panel p-5">
+          <motion.div key={c.name} variants={rise} className="flex flex-col gap-2 rounded border border-rule bg-sheet p-5">
             <span className="eyebrow">{c.name}</span>
-            <span className={`tnum font-display text-4xl font-bold ${c.evidence ? "text-brass" : "text-muted"}`}>{c.value}</span>
+            <span className={`tnum font-display text-4xl font-bold ${c.evidence ? "text-input" : "text-muted"}`}>{c.value}</span>
             <span className="text-sm text-muted">{c.sub}</span>
             <BenchLine bench={bench} metric={c.name} value={"compare" in c ? c.compare! : c.evidence ? c.value : "N/A"} />
             {c.evidence ? (
               <details className="text-xs leading-relaxed text-muted">
-                <summary className="cursor-pointer text-teal">Quote from the proxy</summary>
-                <p className="mt-2">&ldquo;{c.evidence}&rdquo;</p>
+                <summary className="cursor-pointer text-input">Quote from the proxy</summary>
+                <p className="filed mt-2">&ldquo;{c.evidence}&rdquo;</p>
               </details>
             ) : (
               <p className="text-xs text-muted">No sentence stating this number was found in the proxy text; check the filing directly.</p>
@@ -481,7 +481,7 @@ function GovernanceNumbers({ m, bench, proxyUrl }: { m: GovernanceMetrics; bench
       </motion.div>
       <p className="text-xs text-muted">
         Read from sentences in the{" "}
-        <a href={proxyUrl} target="_blank" rel="noreferrer" className="text-teal hover:underline">
+        <a href={proxyUrl} target="_blank" rel="noreferrer" className="text-input hover:underline">
           proxy statement ↗
         </a>
         . These aren&apos;t tagged in XBRL, so each number is only taken from a sentence that states it plainly, and that sentence is quoted.
@@ -513,11 +513,9 @@ export function MemoPanel({ report }: { report: Report }) {
       </p>
       <div>
         <motion.button
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
           onClick={generate}
           disabled={state.loading}
-          className="rounded-full bg-brass px-6 py-3 font-medium text-ink disabled:opacity-60"
+          className="rounded-sm bg-input px-6 py-3 font-medium text-page disabled:opacity-60"
         >
           {state.loading ? "Writing the memo…" : "Generate research memo"}
         </motion.button>
@@ -527,7 +525,7 @@ export function MemoPanel({ report }: { report: Report }) {
           {[92, 80, 86, 60].map((w, i) => (
             <motion.div
               key={i}
-              className="h-3 rounded bg-line"
+              className="h-3 rounded bg-rule"
               style={{ width: `${w}%` }}
               animate={{ opacity: [0.35, 0.8, 0.35] }}
               transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.15 }}
@@ -535,26 +533,26 @@ export function MemoPanel({ report }: { report: Report }) {
           ))}
         </div>
       )}
-      {state.error && <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{state.error}</p>}
+      {state.error && <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{state.error}</p>}
       {state.text && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4">
-          <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-2xl border border-line bg-panel p-5 font-sans text-sm leading-relaxed">
+          <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded border border-rule bg-sheet p-5 font-sans text-sm leading-relaxed">
             {state.text}
           </pre>
           {state.usage && (
-            <p className="font-mono text-xs text-muted">
+            <p className="figures text-xs text-muted">
               Tokens used: {state.usage.input} in, {state.usage.output} out
             </p>
           )}
           <div className="flex flex-wrap gap-3">
             <button
-              className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass"
+              className="rounded-sm border border-rule px-4 py-2 text-sm hover:border-input"
               onClick={() => saveBlob(new Blob([state.text!], { type: "text/plain" }), `${report.ticker}_Institutional_Memo.txt`)}
             >
               Download .txt
             </button>
             {API_URL && (
-              <button className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass" onClick={() => downloadDocx(report.ticker, state.text!)}>
+              <button className="rounded-sm border border-rule px-4 py-2 text-sm hover:border-input" onClick={() => downloadDocx(report.ticker, state.text!)}>
                 Download .docx
               </button>
             )}

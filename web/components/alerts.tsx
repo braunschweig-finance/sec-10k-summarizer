@@ -54,12 +54,12 @@ const usd = (v: number) => {
   return v < 0 ? `-${s}` : s;
 };
 const people = (k: number) => `${k} ${k === 1 ? "insider" : "insiders"}`;
-const TONE: Record<Severity, string> = { high: "border-rose text-rose", medium: "border-brass text-brass", low: "border-line text-muted" };
+const TONE: Record<Severity, string> = { high: "border-flag text-flag", medium: "border-note text-note", low: "border-rule text-muted" };
 const LABEL: Record<Severity, string> = { high: "Serious", medium: "Watch", low: "Note" };
 
 function Box({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-5">
+    <div className="flex flex-col gap-4 rounded border border-rule bg-sheet p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-lg font-bold">{title}</h3>
         {note && <span className="eyebrow">{note}</span>}
@@ -71,13 +71,13 @@ function Box({ title, note, children }: { title: string; note?: string; children
 
 function Waiting({ text }: { text: string }) {
   return (
-    <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
-      <span className="h-2 w-2 rounded-full bg-violet" /> {text}
+    <div className="flex animate-pulse items-center gap-3 rounded border border-rule bg-sheet p-5 text-sm text-muted">
+      <span className="h-2 w-2 rounded-full bg-orig" /> {text}
     </div>
   );
 }
 
-const Err = ({ text }: { text: string }) => <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{text}</p>;
+const Err = ({ text }: { text: string }) => <p className="rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag">{text}</p>;
 
 // ---------- Tab ----------
 
@@ -98,7 +98,7 @@ function FlagList({ r }: { r: RedFlags }) {
   const n = r.flags.length;
   return (
     <Box title="Red flags" note={`8-K, NT 10-K and NT 10-Q filings since ${r.since}`}>
-      <p className={`text-lg ${r.high ? "text-rose" : r.medium ? "text-brass" : "text-teal"}`}>
+      <p className={`text-lg ${r.high ? "text-flag" : r.medium ? "text-note" : "text-pass"}`}>
         {n === 0
           ? `No red flags: none of ${r.filings_checked.toLocaleString("en-US")} filings since ${r.since} was a restatement, auditor change, late filing, CEO or CFO exit, delisting notice, bankruptcy or cyber incident.`
           : `${n} ${n === 1 ? "flag" : "flags"} in ${r.filings_checked.toLocaleString("en-US")} filings since ${r.since}` +
@@ -112,18 +112,18 @@ function FlagList({ r }: { r: RedFlags }) {
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: Math.min(i, 10) * 0.04 }}
-              className={`flex flex-col gap-1 rounded-xl border-l-2 bg-ink/40 px-4 py-3 text-sm ${TONE[f.severity].split(" ")[0]}`}
+              className={`flex flex-col gap-1 rounded-sm border-l-2 bg-page/40 px-4 py-3 text-sm ${TONE[f.severity].split(" ")[0]}`}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="font-semibold">
-                  <span className={`mr-2 font-mono text-xs uppercase ${TONE[f.severity].split(" ")[1]}`}>{LABEL[f.severity]}</span>
+                  <span className={`mr-2 text-xs font-semibold ${TONE[f.severity].split(" ")[1]}`}>{LABEL[f.severity]}</span>
                   {f.flag}
                 </span>
-                <a href={f.url} target="_blank" rel="noreferrer" className="font-mono text-xs text-teal hover:underline">
+                <a href={f.url} target="_blank" rel="noreferrer" className="figures text-xs text-input hover:underline">
                   {f.form} filed {f.filed} ↗
                 </a>
               </div>
-              <span className="leading-relaxed text-muted">{f.quote ? `"${f.quote}"` : f.detail}</span>
+              <span className={`leading-relaxed text-muted ${f.quote ? "filed" : ""}`}>{f.quote ? `“${f.quote}”` : f.detail}</span>
             </motion.li>
           ))}
         </ul>
@@ -137,9 +137,9 @@ function FlagList({ r }: { r: RedFlags }) {
   );
 }
 
-function Stat({ label, value, sub, tone = "text-paper" }: { label: string; value: string; sub: string; tone?: string }) {
+function Stat({ label, value, sub, tone = "text-ink" }: { label: string; value: string; sub: string; tone?: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-line bg-ink/40 p-4">
+    <div className="flex flex-col gap-1 rounded-sm border border-rule bg-page/40 p-4">
       <span className="eyebrow">{label}</span>
       <span className={`tnum font-display text-2xl font-bold ${tone}`}>{value}</span>
       <span className="text-xs text-muted">{sub}</span>
@@ -162,17 +162,17 @@ function TradeTable({ rows }: { rows: InsiderTrade[] }) {
         </thead>
         <tbody>
           {rows.map((g) => (
-            <tr key={`${g.accession}-${g.type}`} className="border-t border-line">
-              <td className="px-3 py-2 font-mono text-xs">{g.first === g.last ? g.last : `${g.first} to ${g.last}`}</td>
+            <tr key={`${g.accession}-${g.type}`} className="border-t border-rule">
+              <td className="px-3 py-2 figures text-xs">{g.first === g.last ? g.last : `${g.first} to ${g.last}`}</td>
               <td className="px-3 py-2">
                 {g.insider} <span className="text-xs text-muted">{g.role}</span>
-                {g.plan && <span className="ml-2 rounded bg-line px-1.5 py-0.5 text-xs text-muted" title="Made under a Rule 10b5-1 trading plan set up in advance">10b5-1 plan</span>}
+                {g.plan && <span className="ml-2 rounded bg-rule px-1.5 py-0.5 text-xs text-muted" title="Made under a Rule 10b5-1 trading plan set up in advance">10b5-1 plan</span>}
               </td>
-              <td className="tnum px-3 py-2 text-right font-mono">{Math.round(g.shares).toLocaleString("en-US")}</td>
-              <td className="tnum px-3 py-2 text-right font-mono">${g.avg_price.toFixed(2)}</td>
-              <td className="tnum px-3 py-2 text-right font-mono">{usd(g.value)}</td>
-              <td className="px-3 py-2 font-mono text-xs">
-                <a href={g.url} target="_blank" rel="noreferrer" className="text-teal hover:underline">
+              <td className="tnum px-3 py-2 text-right figures">{Math.round(g.shares).toLocaleString("en-US")}</td>
+              <td className="tnum px-3 py-2 text-right figures">${g.avg_price.toFixed(2)}</td>
+              <td className="tnum px-3 py-2 text-right figures">{usd(g.value)}</td>
+              <td className="px-3 py-2 figures text-xs">
+                <a href={g.url} target="_blank" rel="noreferrer" className="text-input hover:underline">
                   filed {g.filed} ↗
                 </a>
               </td>
@@ -185,18 +185,18 @@ function TradeTable({ rows }: { rows: InsiderTrade[] }) {
 }
 
 function InsiderCard({ s }: { s: Insiders }) {
-  const tone = s.cluster || s.net_value > 0 ? "text-teal" : s.sells.count ? "text-brass" : "text-paper";
+  const tone = s.cluster || s.net_value > 0 ? "text-pass" : s.sells.count ? "text-note" : "text-ink";
   const r = s.last_90_days;
   return (
     <Box title="Insider buying and selling" note={`Form 4 open-market trades, ${s.from} to ${s.to}`}>
       <p className={`text-lg ${tone}`}>{s.signal}</p>
       <div className="grid gap-3 sm:grid-cols-3">
-        <Stat label="Bought (12 mo.)" value={usd(s.buys.value)} sub={`${s.buys.count} trades by ${people(s.buys.insiders)}`} tone={s.buys.count ? "text-teal" : "text-paper"} />
+        <Stat label="Bought (12 mo.)" value={usd(s.buys.value)} sub={`${s.buys.count} trades by ${people(s.buys.insiders)}`} tone={s.buys.count ? "text-pass" : "text-ink"} />
         <Stat
           label="Sold (12 mo.)"
           value={usd(s.sells.value)}
           sub={`${s.sells.count} trades by ${people(s.sells.insiders)}; ${usd(s.planned_sells.value)} under 10b5-1 plans`}
-          tone={s.sells.count ? "text-brass" : "text-paper"}
+          tone={s.sells.count ? "text-note" : "text-ink"}
         />
         <Stat label="Net, last 90 days" value={usd(r.net_value)} sub={`${usd(r.buys.value)} bought, ${usd(r.sells.value)} sold`} />
       </div>

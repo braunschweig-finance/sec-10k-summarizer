@@ -3,8 +3,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { motion } from "motion/react";
 
-// Series colors for multi-line charts, checked for color-blind separation and contrast on the panel color (#111829)
-export const SERIES = { gold: "#bc862c", teal: "#2a9d92", violet: "#8b7cf6" };
+// Series colors for multi-line charts: input blue, ochre and the Pay Efficiency purple, each at least 4.7:1 on the sheet
+// color (#F8FAF5). Lines also carry their name at the end (or a dash pattern), so color is never the only cue.
+export const SERIES = { a: "#1A47A0", b: "#A35F00", c: "#74368A" };
 
 const PAD = { top: 16, right: 96, bottom: 28, left: 64 };
 
@@ -41,14 +42,14 @@ function Tooltip({ x, y, title, rows }: { x: number; y: number; title: string; r
   return (
     <div
       role="status"
-      className="pointer-events-none absolute z-10 min-w-36 rounded-lg border border-line bg-ink/95 px-3 py-2 text-xs shadow-xl"
+      className="pointer-events-none absolute z-10 min-w-36 rounded-lg border border-rule bg-page/95 px-3 py-2 text-xs shadow-sm"
       style={{ left: `${x}%`, top: `${y}%`, transform: `translate(${flip ? "calc(-100% - 12px)" : "12px"}, -50%)` }}
     >
-      <div className="mb-1 font-mono text-muted">{title}</div>
+      <div className="mb-1 figures text-muted">{title}</div>
       {rows.map((r) => (
         <div key={r.name} className="flex items-center gap-2">
           <span className="h-0.5 w-3 rounded" style={{ background: r.color }} />
-          <span className="tnum font-mono font-semibold text-paper">{r.value}</span>
+          <span className="tnum figures font-semibold text-ink">{r.value}</span>
           <span className="text-muted">{r.name}</span>
         </div>
       ))}
@@ -118,14 +119,14 @@ export function LineChart({
       >
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} stroke="var(--color-line)" strokeDasharray={t === 0 ? undefined : "2 4"} />
-            <text x={PAD.left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-muted font-mono text-[10px]">
+            <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} stroke="var(--color-rule)" strokeDasharray={t === 0 ? undefined : "2 4"} />
+            <text x={PAD.left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-muted figures text-[10px]">
               {format(t)}
             </text>
           </g>
         ))}
         {labels.map((l, i) => (
-          <text key={l} x={x(i)} y={height - 8} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          <text key={l} x={x(i)} y={height - 8} textAnchor="middle" className="fill-muted figures text-[10px]">
             {shortYear(l, iw / labels.length)}
           </text>
         ))}
@@ -148,13 +149,13 @@ export function LineChart({
                 transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
               />
               {pts.map((p, i) =>
-                p ? <circle key={i} cx={p[0]} cy={p[1]} r={hover === i ? 5 : 4} fill={s.color} stroke="var(--color-panel)" strokeWidth={2} /> : null
+                p ? <circle key={i} cx={p[0]} cy={p[1]} r={hover === i ? 5 : 4} fill={s.color} stroke="var(--color-sheet)" strokeWidth={2} /> : null
               )}
             </g>
           );
         })}
         {ends.map((e) => (
-          <text key={e.s.name} x={x(e.i) + 10} y={e.y} dy="0.32em" className="fill-paper text-[11px]">
+          <text key={e.s.name} x={x(e.i) + 10} y={e.y} dy="0.32em" className="fill-ink text-[11px]">
             {e.s.name}
           </text>
         ))}
@@ -176,7 +177,7 @@ export function BarChart({
   labels,
   values,
   format,
-  color = "var(--color-brass)",
+  color = "var(--color-input)",
   height = 240,
   ariaLabel,
 }: {
@@ -206,8 +207,8 @@ export function BarChart({
       <svg viewBox={`0 0 ${W} ${height}`} className="w-full select-none" role="img" aria-label={ariaLabel} onPointerLeave={() => setHover(null)}>
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={pad.left} x2={W - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-line)" strokeDasharray={t === 0 ? undefined : "2 4"} />
-            <text x={pad.left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-muted font-mono text-[10px]">
+            <line x1={pad.left} x2={W - pad.right} y1={y(t)} y2={y(t)} stroke="var(--color-rule)" strokeDasharray={t === 0 ? undefined : "2 4"} />
+            <text x={pad.left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-muted figures text-[10px]">
               {format(t)}
             </text>
           </g>
@@ -232,11 +233,11 @@ export function BarChart({
                 transition={{ duration: 0.9, delay: 0.08 * i, ease: [0.16, 1, 0.3, 1] }}
               />
               {v !== null && (
-                <text x={cx} y={top - 6} textAnchor="middle" className="tnum fill-paper font-mono text-[10px]">
+                <text x={cx} y={top - 6} textAnchor="middle" className="tnum fill-ink figures text-[10px]">
                   {format(v)}
                 </text>
               )}
-              <text x={cx} y={height - 8} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+              <text x={cx} y={height - 8} textAnchor="middle" className="fill-muted figures text-[10px]">
                 {shortYear(l, slot)}
               </text>
             </g>
@@ -288,9 +289,9 @@ export function DotStrip({ values, mark, markLabel, median }: { values: number[]
     <div ref={box} className="relative">
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full select-none" role="img" aria-labelledby={id} onPointerLeave={() => setHover(null)}>
         <title id={id}>{`${markLabel} compared with ${values.length} peer companies`}</title>
-        <line x1={left} x2={width - right} y1={60} y2={60} stroke="var(--color-line)" />
+        <line x1={left} x2={width - right} y1={60} y2={60} stroke="var(--color-rule)" />
         <line x1={x(median)} x2={x(median)} y1={20} y2={64} stroke="var(--color-muted)" strokeDasharray="2 3" />
-        <text x={x(median)} y={14} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+        <text x={x(median)} y={14} textAnchor="middle" className="fill-muted figures text-[10px]">
           median
         </text>
         {dots.map((d, i) => (
@@ -305,25 +306,25 @@ export function DotStrip({ values, mark, markLabel, median }: { values: number[]
           />
         ))}
         <motion.g initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 15, delay: 0.4 }} style={{ originX: `${x(mark)}px`, originY: "52px" }}>
-          <circle cx={x(mark)} cy={52} r={7} fill="var(--color-violet)" stroke="var(--color-panel)" strokeWidth={2} />
+          <circle cx={x(mark)} cy={52} r={7} fill="var(--color-orig)" stroke="var(--color-sheet)" strokeWidth={2} />
         </motion.g>
         {pinned && (
-          <text x={x(mark) + (pinned === "right" ? -12 : 12)} y={40} textAnchor={pinned === "right" ? "end" : "start"} className="fill-violet font-mono text-[11px] font-bold">
+          <text x={x(mark) + (pinned === "right" ? -12 : 12)} y={40} textAnchor={pinned === "right" ? "end" : "start"} className="fill-orig figures text-[11px] font-bold">
             {pinned === "right" ? `${mark.toFixed(1)}% (off the scale) →` : `← ${mark.toFixed(1)}% (off the scale)`}
           </text>
         )}
         {ticks.map((t) => (
-          <text key={t} x={x(t)} y={78} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          <text key={t} x={x(t)} y={78} textAnchor="middle" className="fill-muted figures text-[10px]">
             {t}%
           </text>
         ))}
         {beyond > 0 && (
-          <text x={width - right} y={90} textAnchor="end" className="fill-muted font-mono text-[10px]">
+          <text x={width - right} y={90} textAnchor="end" className="fill-muted figures text-[10px]">
             {beyond} above {hi}% shown at the edge
           </text>
         )}
         {below > 0 && (
-          <text x={left} y={90} className="fill-muted font-mono text-[10px]">
+          <text x={left} y={90} className="fill-muted figures text-[10px]">
             {below} below {lo}% shown at the edge
           </text>
         )}
@@ -397,7 +398,7 @@ export function DualAxisChart({
           animate={{ pathLength: 1 }}
           transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
         />
-        {pts.map((p, i) => (p ? <circle key={i} cx={p[0]} cy={p[1]} r={hover === i ? 5 : 4} fill={s.color} stroke="var(--color-panel)" strokeWidth={2} /> : null))}
+        {pts.map((p, i) => (p ? <circle key={i} cx={p[0]} cy={p[1]} r={hover === i ? 5 : 4} fill={s.color} stroke="var(--color-sheet)" strokeWidth={2} /> : null))}
       </g>
     );
   };
@@ -418,18 +419,18 @@ export function DualAxisChart({
           const yy = pad.top + ih - (ih * k) / 4;
           return (
             <g key={k}>
-              <line x1={pad.left} x2={W - pad.right} y1={yy} y2={yy} stroke="var(--color-line)" strokeDasharray={k === 0 ? undefined : "2 4"} />
-              <text x={pad.left - 8} y={yy} dy="0.32em" textAnchor="end" className="font-mono text-[10px]" fill={left.color}>
+              <line x1={pad.left} x2={W - pad.right} y1={yy} y2={yy} stroke="var(--color-rule)" strokeDasharray={k === 0 ? undefined : "2 4"} />
+              <text x={pad.left - 8} y={yy} dy="0.32em" textAnchor="end" className="figures text-[10px]" fill={left.color}>
                 {left.format(L.lo + ((L.hi - L.lo) * k) / 4)}
               </text>
-              <text x={W - pad.right + 8} y={yy} dy="0.32em" className="font-mono text-[10px]" fill={right.color}>
+              <text x={W - pad.right + 8} y={yy} dy="0.32em" className="figures text-[10px]" fill={right.color}>
                 {right.format(R.lo + ((R.hi - R.lo) * k) / 4)}
               </text>
             </g>
           );
         })}
         {labels.map((l, i) => (
-          <text key={l} x={x(i)} y={height - 8} textAnchor="middle" className="fill-muted font-mono text-[10px]">
+          <text key={l} x={x(i)} y={height - 8} textAnchor="middle" className="fill-muted figures text-[10px]">
             {shortYear(l, iw / labels.length)}
           </text>
         ))}
