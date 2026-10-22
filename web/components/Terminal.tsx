@@ -273,7 +273,10 @@ function WorkingPaper({ report, example }: { report: Report; example: boolean })
   const op = report.inputs["Operating Income"];
   const rev = report.inputs.Revenue;
   const margin = report.ratios["Operating Margin"] ?? "N/A";
-  const period = rev?.period || op?.period || "";
+  // Live periods look like "2026-06-30 (FY)", the sample's like "FY2025"
+  const raw = rev?.period || op?.period || "";
+  const date = raw.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  const source = date ? `10-K, year to ${date}` : `${raw} 10-K`;
   const rows = [
     { label: op?.label || "Operating income", value: op ? fmtFiled(op.value_m) : "Not reported", filed: !!op },
     { label: rev?.label || "Total revenue", value: rev ? fmtFiled(rev.value_m) : "Not reported", filed: !!rev },
@@ -284,7 +287,7 @@ function WorkingPaper({ report, example }: { report: Report; example: boolean })
       <div aria-hidden className="pointer-events-none absolute inset-y-0 left-7 w-px bg-flag/40" />
       <figcaption className="flex items-baseline justify-between gap-3 border-b border-rule py-3 pr-4 pl-10 text-sm">
         <span className="font-semibold">{example ? `Example: ${report.name}` : report.name}</span>
-        <span className="figures text-muted">{period} 10-K</span>
+        <span className="figures text-right text-muted">{source}</span>
       </figcaption>
       <dl key={report.ticker} className="flex flex-col py-2 pr-4 pl-10">
         {rows.map((r, i) => (
