@@ -1,10 +1,11 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { AnimatePresence, motion, useInView } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import type { Report } from "@/lib/types";
 import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchRisks, fetchTrends } from "@/lib/api";
-import { Aurora, TickerTape, WordReveal } from "./fx";
+import { Tick } from "./fx";
+import { SAMPLE_CAT } from "@/lib/sample";
 import { GovernancePanel, MemoPanel, RatiosPanel, StatementsPanel } from "./panels";
 import { ComparePanel, ExportButtons, TrendsPanel } from "./features";
 import { SummaryPanel } from "./summary";
@@ -90,84 +91,63 @@ export default function Terminal() {
     }
   }
 
+  const sheet = report ?? SAMPLE_CAT;
+
   return (
     <main className="min-h-screen">
-      {/* HERO */}
-      <section className="relative overflow-hidden">
-        <Aurora />
-        <div className="gutter relative mx-auto flex max-w-6xl flex-col gap-8 pt-16 pb-12 sm:pt-24">
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-2 rounded-full border border-line bg-panel/70 px-3 py-1 font-mono text-xs text-muted backdrop-blur">
-              <span className="relative flex h-2 w-2">
-                <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${API_URL ? "bg-teal" : "bg-brass"} opacity-60`} />
-                <span className={`relative inline-flex h-2 w-2 rounded-full ${API_URL ? "bg-teal" : "bg-brass"}`} />
-              </span>
-              {API_URL ? "Live · SEC EDGAR" : "Preview · sample data"}
-            </span>
-            <span className="eyebrow">Form 10-K · Form DEF 14A · XBRL</span>
-          </motion.div>
+      {/* MASTHEAD */}
+      <header className="double-rule bg-sheet">
+        <div className="gutter mx-auto flex max-w-6xl flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-3">
+          <span className="text-lg font-extrabold tracking-tight">SEC Filing Terminal</span>
+          <span className="flex items-center gap-2 text-sm text-muted">
+            <span className={`h-2 w-2 rounded-full ${API_URL ? "bg-pass" : "bg-input"}`} aria-hidden />
+            {API_URL ? "Reading live from SEC EDGAR" : "Sample data only (no data server set)"}
+          </span>
+        </div>
+      </header>
 
-          <h1 className="max-w-4xl text-5xl leading-[0.95] font-extrabold tracking-tight sm:text-7xl">
-            <WordReveal text="Read any company's filings like an analyst." accent="analyst." />
-          </h1>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.6 }}
-            className="max-w-xl text-lg leading-relaxed text-muted"
-          >
-            Audited statements, ratios you can trace to the exact filed line, and governance checks quoted straight from the proxy statement.
-          </motion.p>
+      {/* LOOKUP + WORKING PAPER */}
+      <section className="gutter mx-auto grid max-w-6xl items-start gap-10 pt-12 pb-12 sm:pt-16 lg:grid-cols-[1fr_minmax(0,25rem)] lg:gap-16">
+        <div className="flex flex-col gap-6">
+          <h1 className="max-w-2xl text-4xl leading-[1.05] font-extrabold sm:text-6xl">Look up a company. Check every number against its filings.</h1>
+          <p className="max-w-xl text-lg leading-relaxed text-muted">
+            Ratios, governance checks and red flags from SEC 10-K and proxy filings. Figures in blue are copied as filed, and each one is tied to
+            the line item or sentence it came from.
+          </p>
 
-          <motion.form
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.75 }}
+          <form
             onSubmit={(e) => {
               e.preventDefault();
               load(ticker);
             }}
             className="flex max-w-xl flex-col gap-3"
           >
-            <div className="group relative rounded-2xl p-px">
-              <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-brass via-violet to-teal opacity-50 blur-sm transition-opacity group-focus-within:opacity-100" />
-              <div className="relative flex items-center gap-2 rounded-2xl bg-ink p-2">
-                <label htmlFor="ticker" className="pl-3 font-mono text-sm text-muted">
-                  $
-                </label>
-                <input
-                  id="ticker"
-                  value={ticker}
-                  onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                  placeholder="Type a ticker, e.g. AAPL"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="min-w-0 flex-1 bg-transparent py-2 font-mono text-lg tracking-wider uppercase outline-none placeholder:text-muted/60"
-                />
-                <motion.button
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  type="submit"
-                  className="rounded-xl bg-paper px-5 py-2.5 font-medium text-ink"
-                >
-                  {loading ? "Pulling…" : "Analyze"}
-                </motion.button>
-              </div>
+            <label htmlFor="ticker" className="text-sm font-semibold">
+              Ticker symbol
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="ticker"
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value.toUpperCase())}
+                placeholder="AAPL"
+                autoComplete="off"
+                spellCheck={false}
+                className="min-w-0 flex-1 rounded-sm border-2 border-ink bg-sheet px-4 py-3 figures text-xl font-semibold tracking-wide uppercase outline-none placeholder:font-normal placeholder:text-muted/50 focus:border-input"
+              />
+              <button type="submit" disabled={loading} className="rounded-sm bg-ink px-6 py-3 font-semibold text-sheet hover:bg-input disabled:opacity-70">
+                {loading ? "Reading filings…" : "Look up"}
+              </button>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted">Try</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+              <span className="text-muted">Examples:</span>
               {QUICK.map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  onClick={() => load(q)}
-                  className="rounded-full border border-line px-3 py-1 font-mono text-xs text-muted transition-colors hover:border-brass hover:text-paper"
-                >
+                <button key={q} type="button" onClick={() => load(q)} className="figures font-semibold text-input underline decoration-rule underline-offset-4 hover:decoration-input">
                   {q}
                 </button>
               ))}
             </div>
-          </motion.form>
+          </form>
 
           <AnimatePresence>
             {loading && slow && (
@@ -178,7 +158,7 @@ export default function Terminal() {
                 className="max-w-xl text-sm text-muted"
                 role="status"
               >
-                Pulling {ticker}&apos;s 10-K and proxy from SEC EDGAR. A company's first search reads its filings from SEC and can take up to a minute; repeat searches are quick.
+                Reading {ticker}&apos;s 10-K and proxy from SEC EDGAR. A company&apos;s first lookup can take up to a minute; after that it&apos;s quick.
               </motion.p>
             )}
             {error && (
@@ -186,7 +166,7 @@ export default function Terminal() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 exit={{ opacity: 0, height: 0 }}
-                className="max-w-xl rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose"
+                className="max-w-xl rounded-sm border-l-4 border-flag bg-sheet px-4 py-3 text-sm text-flag"
                 role="alert"
               >
                 {error}
@@ -194,33 +174,30 @@ export default function Terminal() {
             )}
           </AnimatePresence>
         </div>
+
+        <WorkingPaper report={sheet} example={!report} />
       </section>
 
-      <TickerTape />
-
       {/* TERMINAL */}
-      <section className="gutter mx-auto flex max-w-6xl flex-col gap-8 py-14">
+      <section className="gutter mx-auto flex max-w-6xl flex-col gap-8 pb-16">
         <AnimatePresence mode="wait">
           {report && (
             <motion.div
               key={report.ticker}
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.5 }}
-              className="flex flex-col gap-8"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="flex flex-col gap-6"
             >
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <div className="flex flex-col gap-2">
-                  <span className="eyebrow">Now analyzing</span>
-                  <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-                    {report.name} <span className="font-mono text-2xl font-normal text-brass">{report.ticker}</span>
-                  </h2>
-                </div>
+              <div className="flex flex-wrap items-end justify-between gap-4 border-t-2 border-ink pt-6">
+                <h2 className="text-3xl font-extrabold sm:text-4xl">
+                  {report.name} <span className="figures text-xl font-semibold text-muted">{report.ticker}</span>
+                </h2>
                 <div className="flex flex-wrap justify-end gap-2">
                   <ExportButtons ticker={report.ticker} />
                   {report.tenk_url && (
-                    <a href={report.tenk_url} target="_blank" rel="noreferrer" className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass">
+                    <a href={report.tenk_url} target="_blank" rel="noreferrer" className="rounded-sm border border-rule bg-sheet px-4 py-2 text-sm hover:border-input">
                       10-K on EDGAR ↗
                     </a>
                   )}
@@ -229,43 +206,34 @@ export default function Terminal() {
                       href={report.governance.proxy_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="rounded-full border border-line px-4 py-2 text-sm hover:border-brass"
+                      className="rounded-sm border border-rule bg-sheet px-4 py-2 text-sm hover:border-input"
                     >
-                      DEF 14A on EDGAR ↗
+                      Proxy (DEF 14A) on EDGAR ↗
                     </a>
                   )}
                 </div>
               </div>
 
-              {report.sample && (
-                <p className="rounded-xl border border-brass/30 bg-brass/10 px-4 py-3 text-sm text-brass">{report.sample.note}</p>
-              )}
+              {report.sample && <p className="rounded-sm border-l-4 border-input bg-sheet px-4 py-3 text-sm">{report.sample.note}</p>}
 
-              <div role="tablist" className="flex gap-1 overflow-x-auto rounded-2xl border border-line bg-panel p-1">
+              <div role="tablist" aria-label="Views" className="flex gap-1 overflow-x-auto border-b border-rule">
                 {TABS.map((t) => (
                   <button
                     key={t.id}
                     role="tab"
                     aria-selected={tab === t.id}
                     onClick={() => setTab(t.id)}
-                    className={`relative flex-1 rounded-xl px-4 py-2.5 text-sm whitespace-nowrap transition-colors ${tab === t.id ? "text-ink" : "text-muted hover:text-paper"}`}
+                    className={`-mb-px border-b-[3px] px-3 py-2.5 text-sm whitespace-nowrap ${
+                      tab === t.id ? "border-ink font-semibold text-ink" : "border-transparent text-muted hover:border-rule hover:text-ink"
+                    }`}
                   >
-                    {tab === t.id && (
-                      <motion.span layoutId="tab-pill" className="absolute inset-0 rounded-xl bg-brass" transition={{ type: "spring", bounce: 0.2, duration: 0.5 }} />
-                    )}
-                    <span className="relative font-medium">{t.label}</span>
+                    {t.label}
                   </button>
                 ))}
               </div>
 
               <AnimatePresence mode="wait">
-                <motion.div
-                  key={tab}
-                  initial={{ opacity: 0, x: 16 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -16 }}
-                  transition={{ duration: 0.25 }}
-                >
+                <motion.div key={tab} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
                   {tab === "ratios" && <RatiosPanel report={report} />}
                   {tab === "grade" && <GradePanel report={report} />}
                   {tab === "value" && <FairValuePanel report={report} />}
@@ -287,11 +255,64 @@ export default function Terminal() {
 
       <Pipeline />
 
-      <footer className="gutter mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-line py-8 text-sm text-muted">
-        <span>Built by Jacob Braunschweig · Data from SEC EDGAR</span>
-        <span className="font-mono text-xs">Numbers: Python · Memo: Gemini</span>
+      <footer className="gutter mx-auto flex max-w-6xl flex-wrap justify-between gap-4 py-8 text-sm text-muted">
+        <span>Built by Jacob Braunschweig. Data from SEC EDGAR.</span>
+        <span>Numbers are computed in Python; only the memo and tone text come from Gemini.</span>
       </footer>
     </main>
+  );
+}
+
+const fmtFiled = (n: number) => Math.round(n).toLocaleString("en-US");
+
+/**
+ * The hero: one ratio worked out the way an auditor would on a working paper. Two filed figures (blue, ticked "a"),
+ * the computed margin (black, ticked "b"), and the legend. Shows the company being looked at, or the Caterpillar example.
+ */
+function WorkingPaper({ report, example }: { report: Report; example: boolean }) {
+  const op = report.inputs["Operating Income"];
+  const rev = report.inputs.Revenue;
+  const margin = report.ratios["Operating Margin"] ?? "N/A";
+  const period = rev?.period || op?.period || "";
+  const rows = [
+    { label: op?.label || "Operating income", value: op ? fmtFiled(op.value_m) : "Not reported", filed: !!op },
+    { label: rev?.label || "Total revenue", value: rev ? fmtFiled(rev.value_m) : "Not reported", filed: !!rev },
+  ];
+  return (
+    <figure className="relative rounded-sm border border-rule bg-sheet shadow-[0_1px_0_var(--color-rule),0_10px_24px_-18px_rgb(23_36_29/0.45)]">
+      {/* columnar-pad ruling: a red margin line and pale column rules */}
+      <div aria-hidden className="pointer-events-none absolute inset-y-0 left-7 w-px bg-flag/40" />
+      <figcaption className="flex items-baseline justify-between gap-3 border-b border-rule py-3 pr-4 pl-10 text-sm">
+        <span className="font-semibold">{example ? `Example: ${report.name}` : report.name}</span>
+        <span className="figures text-muted">{period} 10-K</span>
+      </figcaption>
+      <dl key={report.ticker} className="flex flex-col py-2 pr-4 pl-10">
+        {rows.map((r, i) => (
+          <div key={r.label} className="flex items-baseline justify-between gap-4 border-b border-rule/60 py-2.5">
+            <dt className="text-sm">{r.label}</dt>
+            <dd className={`flex items-start gap-1 figures text-lg font-semibold ${r.filed ? "text-input" : "text-muted"}`}>
+              {r.value}
+              {r.filed && <Tick letter="a" delay={0.3 + i * 0.25} />}
+            </dd>
+          </div>
+        ))}
+        <div className="flex items-baseline justify-between gap-4 border-t-2 border-ink py-3">
+          <dt className="text-sm font-semibold">Operating margin</dt>
+          <dd className="flex items-start gap-1 figures text-3xl font-extrabold">
+            {margin}
+            {margin !== "N/A" && <Tick letter="b" delay={0.85} className="text-ink" />}
+          </dd>
+        </div>
+      </dl>
+      <div className="flex flex-col gap-1 border-t border-rule py-3 pr-4 pl-10 text-xs leading-relaxed text-muted">
+        <span>
+          <Tick letter="a" className="text-input" /> Agreed to the 10-K as filed ($ millions)
+        </span>
+        <span>
+          <Tick letter="b" className="text-ink" /> Recalculated: operating income ÷ revenue
+        </span>
+      </div>
+    </figure>
   );
 }
 
@@ -303,37 +324,19 @@ const STEPS = [
   { form: "Gemini", title: "Write the memo", body: "AI only writes prose, from the numbers and quotes above. It never produces a figure." },
 ];
 
-/** "How it works": the order is the real pipeline order, and the line draws as you scroll. */
+/** How the numbers are made. A real sequence (the order the API runs in), so the steps are numbered. */
 function Pipeline() {
-  const ref = useRef<HTMLOListElement>(null);
-  const inView = useInView(ref, { once: true, margin: "-80px" });
   return (
-    <section className="border-t border-line bg-panel/40">
+    <section className="border-t-2 border-ink bg-sheet">
       <div className="gutter mx-auto flex max-w-6xl flex-col gap-8 py-14">
-        <div className="flex flex-col gap-2">
-          <span className="eyebrow">How it works</span>
-          <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">From filing to finding, in five steps</h2>
-        </div>
-        <ol ref={ref} className="relative grid gap-6 md:grid-cols-5">
-          <motion.div
-            aria-hidden
-            className="absolute top-4 left-4 hidden h-px origin-left bg-gradient-to-r from-brass via-violet to-teal md:block"
-            style={{ right: "1rem" }}
-            initial={{ scaleX: 0 }}
-            animate={{ scaleX: inView ? 1 : 0 }}
-            transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}
-          />
+        <h2 className="text-2xl font-extrabold sm:text-3xl">How the numbers are made</h2>
+        <ol className="grid gap-x-8 gap-y-6 md:grid-cols-5">
           {STEPS.map((s, i) => (
-            <li key={s.title} className="relative flex flex-col gap-3">
-              <motion.span
-                className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-ink font-mono text-xs text-brass"
-                animate={inView ? { scale: [1, 1.25, 1] } : undefined}
-                transition={{ delay: 0.25 * i + 0.2, duration: 0.5 }}
-              >
-                {i + 1}
-              </motion.span>
-              <span className="font-mono text-xs text-muted">{s.form}</span>
-              <h3 className="text-lg font-bold">{s.title}</h3>
+            <li key={s.title} className="flex flex-col gap-2 border-t border-rule pt-3">
+              <span className="figures text-sm text-muted">
+                Step {i + 1}, {s.form}
+              </span>
+              <h3 className="text-base font-bold">{s.title}</h3>
               <p className="text-sm leading-relaxed text-muted">{s.body}</p>
             </li>
           ))}
