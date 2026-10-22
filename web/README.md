@@ -1,7 +1,7 @@
 # SEC Terminal: animated web version
 
 A redesigned front end for the SEC Financial & Corporate Governance Terminal. It shows the same numbers as the
-Streamlit app (`app.py`), with motion: animated hero, count-up ratios, sliding tabs, scroll-drawn pipeline.
+Streamlit app (`app.py`), laid out like an analyst's marked-up filing: the hero traces a ratio back to its 10-K lines, ratios count up, and the five-step pipeline draws in as you scroll. Design notes are at the top of `app/globals.css`.
 
 Two parts:
 

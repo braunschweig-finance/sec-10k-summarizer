@@ -23,13 +23,13 @@ export function BenchLine({ bench, metric, value, lowerIsBetter }: { bench?: Ben
   const own = /^[≈]?-?[\d,.]+\s?(%|x|: 1)?$/.test(value.trim()) ? parseFloat(value.replace(/[≈,]/g, "")) : null;
   const above = own !== null ? own > stat.median : null;
   return (
-    <div className="flex flex-col gap-1.5 border-t border-line pt-3 text-xs text-muted">
+    <div className="flex flex-col gap-1.5 border-t border-rule pt-3 text-xs text-muted">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <span>
-          {bench.group} median <span className="tnum font-mono text-paper">{fmt(stat.median)}</span>
+          {bench.group} median <span className="tnum font-figures text-ink">{fmt(stat.median)}</span>
         </span>
         {above !== null && own !== stat.median && (
-          <span className={lowerIsBetter ? (above ? "text-rose" : "text-teal") : ""}>{above ? "Above" : "Below"} median</span>
+          <span className={lowerIsBetter ? (above ? "text-red" : "text-green") : ""}>{above ? "Above" : "Below"} median</span>
         )}
       </div>
       <span>

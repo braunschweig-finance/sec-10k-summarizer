@@ -13,10 +13,10 @@ const fyLabel = (fyEnd: string) => `FY${fyEnd.slice(0, 4)}`;
 
 function Card({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border border-line bg-panel p-5">
+    <div className="flex flex-col gap-4 rounded-2xl border border-rule bg-sheet p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-lg font-bold">{title}</h3>
-        {note && <span className="eyebrow">{note}</span>}
+        {note && <span className="caption">{note}</span>}
       </div>
       {children}
     </div>
@@ -25,14 +25,14 @@ function Card({ title, note, children }: { title: string; note?: string; childre
 
 function Loading({ text }: { text: string }) {
   return (
-    <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-line bg-panel p-5 text-sm text-muted">
-      <span className="h-2 w-2 rounded-full bg-violet" /> {text}
+    <div className="flex animate-pulse items-center gap-3 rounded-2xl border border-rule bg-sheet p-5 text-sm text-muted">
+      <span className="h-2 w-2 rounded-[3px] bg-ink" /> {text}
     </div>
   );
 }
 
 function ErrorNote({ text }: { text: string }) {
-  return <p className="rounded-xl border border-rose/30 bg-rose/10 px-4 py-3 text-sm text-rose">{text}</p>;
+  return <p className="rounded-xl border border-red/30 bg-red/10 px-4 py-3 text-sm text-red">{text}</p>;
 }
 
 // ---------- Trends tab ----------
@@ -74,16 +74,16 @@ export function TrendsPanel({ report }: { report: Report }) {
             ariaLabel="Gross, operating and net margin by year"
             format={fmtPct(1)}
             series={[
-              { name: "Gross", color: SERIES.gold, values: years.map((y) => y.margins["Gross Margin"]) },
-              { name: "Operating", color: SERIES.teal, values: years.map((y) => y.margins["Operating Margin"]) },
-              { name: "Net", color: SERIES.violet, values: years.map((y) => y.margins["Net Margin"]) },
+              { name: "Gross", color: SERIES.blue, values: years.map((y) => y.margins["Gross Margin"]) },
+              { name: "Operating", color: SERIES.green, values: years.map((y) => y.margins["Operating Margin"]) },
+              { name: "Net", color: SERIES.ink, values: years.map((y) => y.margins["Net Margin"]) },
             ]}
           />
           <div className="flex flex-wrap gap-4 text-xs text-muted">
             {[
-              ["Gross margin", SERIES.gold],
-              ["Operating margin", SERIES.teal],
-              ["Net margin", SERIES.violet],
+              ["Gross margin", SERIES.blue],
+              ["Operating margin", SERIES.green],
+              ["Net margin", SERIES.ink],
             ].map(([n, c]) => (
               <span key={n} className="flex items-center gap-2">
                 <span className="h-0.5 w-4 rounded" style={{ background: c }} />
@@ -95,9 +95,9 @@ export function TrendsPanel({ report }: { report: Report }) {
       </div>
       {pe.length > 0 && <PayVsPrice pe={pe} trends={report.trends} />}
 
-      <div className="overflow-x-auto rounded-2xl border border-line">
+      <div className="overflow-x-auto rounded-2xl border border-rule">
         <table className="w-full min-w-[760px] text-sm">
-          <thead className="bg-panel text-muted">
+          <thead className="bg-sheet text-muted">
             <tr>
               {["Fiscal year", "Revenue", "Gross profit", "Operating income", "Net income", "Gross m.", "Op. m.", "Net m.", "10-K"].map((h, i) => (
                 <th key={h} className={`px-4 py-3 font-medium ${i === 0 || i === 8 ? "text-left" : "text-right"}`}>
@@ -108,23 +108,23 @@ export function TrendsPanel({ report }: { report: Report }) {
           </thead>
           <tbody>
             {years.map((y) => (
-              <tr key={y.fy_end} className="border-t border-line hover:bg-panel/70">
-                <td className="px-4 py-2.5 font-mono text-xs">
+              <tr key={y.fy_end} className="border-t border-rule hover:bg-sheet/70">
+                <td className="px-4 py-2.5 font-figures text-xs">
                   FY{y.fiscal_year} <span className="text-muted">({y.fy_end})</span>
                 </td>
                 {(["Revenue", "Gross Profit", "Operating Income", "Net Income"] as const).map((k) => (
-                  <td key={k} className="tnum px-4 py-2.5 text-right font-mono" title={y.lines[k]?.concept}>
+                  <td key={k} className="tnum px-4 py-2.5 text-right font-figures" title={y.lines[k]?.concept}>
                     {y.lines[k] ? fmtM(y.lines[k]!.value_m) : "N/A"}
                   </td>
                 ))}
                 {(["Gross Margin", "Operating Margin", "Net Margin"] as const).map((k) => (
-                  <td key={k} className="tnum px-4 py-2.5 text-right font-mono text-muted">
+                  <td key={k} className="tnum px-4 py-2.5 text-right font-figures text-muted">
                     {y.margins[k] === null ? "N/A" : `${y.margins[k]!.toFixed(1)}%`}
                   </td>
                 ))}
-                <td className="px-4 py-2.5 font-mono text-xs">
+                <td className="px-4 py-2.5 font-figures text-xs">
                   {y.lines.Revenue?.url ? (
-                    <a href={y.lines.Revenue.url} target="_blank" rel="noreferrer" className="text-teal hover:underline">
+                    <a href={y.lines.Revenue.url} target="_blank" rel="noreferrer" className="text-green hover:underline">
                       {y.lines.Revenue.accn} ↗
                     </a>
                   ) : (
@@ -164,15 +164,15 @@ function PayVsPrice({ pe, trends }: { pe: NonNullable<Extract<PayEfficiency, { a
           <DualAxisChart
             labels={labels}
             ariaLabel="Pay Efficiency (left axis) and share price at fiscal year end (right axis)"
-            left={{ name: "Pay Efficiency", color: SERIES.violet, values: rows.map((r) => r.pct), format: fmtPct(2) }}
-            right={{ name: "Share price", color: SERIES.gold, values: rows.map((r) => r.price?.close ?? null), format: (v) => `$${Math.round(v)}` }}
+            left={{ name: "Pay Efficiency", color: SERIES.ink, values: rows.map((r) => r.pct), format: fmtPct(2) }}
+            right={{ name: "Share price", color: SERIES.blue, values: rows.map((r) => r.price?.close ?? null), format: (v) => `$${Math.round(v)}` }}
           />
           <div className="flex flex-wrap gap-4 text-xs text-muted">
             <span className="flex items-center gap-2">
-              <span className="h-0.5 w-4 rounded" style={{ background: SERIES.violet }} /> Pay Efficiency (left axis)
+              <span className="h-0.5 w-4 rounded" style={{ background: SERIES.ink }} /> Pay Efficiency (left axis)
             </span>
             <span className="flex items-center gap-2">
-              <span className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: SERIES.gold }} /> Share price at fiscal year end (right axis)
+              <span className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: SERIES.blue }} /> Share price at fiscal year end (right axis)
             </span>
           </div>
         </>
@@ -182,7 +182,7 @@ function PayVsPrice({ pe, trends }: { pe: NonNullable<Extract<PayEfficiency, { a
           ariaLabel="Pay Efficiency"
           format={fmtPct(2)}
           height={220}
-          series={[{ name: "Pay Efficiency", color: SERIES.violet, values: rows.map((r) => r.pct) }]}
+          series={[{ name: "Pay Efficiency", color: SERIES.ink, values: rows.map((r) => r.pct) }]}
         />
       )}
       <div className="overflow-x-auto">
@@ -202,19 +202,19 @@ function PayVsPrice({ pe, trends }: { pe: NonNullable<Extract<PayEfficiency, { a
               const close = r.price?.close ?? null;
               const change = prev && close ? ((close - prev) / prev) * 100 : null;
               return (
-                <tr key={r.fy_end} className="border-t border-line">
-                  <td className="px-3 py-2 font-mono text-xs">
+                <tr key={r.fy_end} className="border-t border-rule">
+                  <td className="px-3 py-2 font-figures text-xs">
                     {fyLabel(r.fy_end)} <span className="text-muted">({r.fy_end})</span>
                   </td>
-                  <td className="tnum px-3 py-2 text-right font-mono">{r.value}</td>
-                  <td className="tnum px-3 py-2 text-right font-mono" title={r.price?.date ? `Close on ${r.price.date}` : undefined}>
+                  <td className="tnum px-3 py-2 text-right font-figures">{r.value}</td>
+                  <td className="tnum px-3 py-2 text-right font-figures" title={r.price?.date ? `Close on ${r.price.date}` : undefined}>
                     {close !== null ? fmtUsd(close) : "N/A"}
                   </td>
-                  <td className={`tnum px-3 py-2 text-right font-mono ${change === null ? "text-muted" : change >= 0 ? "text-teal" : "text-rose"}`}>
+                  <td className={`tnum px-3 py-2 text-right font-figures ${change === null ? "text-muted" : change >= 0 ? "text-green" : "text-red"}`}>
                     {change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`}
                   </td>
-                  <td className="tnum px-3 py-2 text-right font-mono">{r.tsr != null ? fmtUsd(r.tsr) : "N/A"}</td>
-                  <td className="tnum px-3 py-2 text-right font-mono text-muted">{r.peer_tsr != null ? fmtUsd(r.peer_tsr) : "N/A"}</td>
+                  <td className="tnum px-3 py-2 text-right font-figures">{r.tsr != null ? fmtUsd(r.tsr) : "N/A"}</td>
+                  <td className="tnum px-3 py-2 text-right font-figures text-muted">{r.peer_tsr != null ? fmtUsd(r.peer_tsr) : "N/A"}</td>
                 </tr>
               );
             })}
@@ -238,9 +238,9 @@ export function PeerRank({ pe }: { pe: Extract<PayEfficiency, { available: true 
   if (!p || pe.pct === null || pe.pct === undefined) return null;
   const lower = Math.round(p.lower_than_pct);
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-line bg-ink/40 p-4">
+    <div className="flex flex-col gap-3 rounded-xl border border-rule bg-page/40 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="eyebrow">Peer ranking · fiscal {p.peer_year}</span>
+        <span className="caption">Peer ranking · fiscal {p.peer_year}</span>
         <span className="text-xs text-muted">
           Median {p.median.toFixed(2)}% · middle half {p.p25.toFixed(2)}% to {p.p75.toFixed(2)}%
         </span>
@@ -248,14 +248,14 @@ export function PeerRank({ pe }: { pe: Extract<PayEfficiency, { available: true 
       <p className="text-sm">
         {p.higher_count === 0 ? (
           <>
-            <span className="font-display text-2xl font-bold text-violet">Highest</span>{" "}
+            <span className="font-display text-2xl font-bold text-ink">Highest</span>{" "}
             <span className="text-muted">
               of {p.count} S&amp;P 500 companies (none of them paid their CEO a bigger share of operating income).
             </span>
           </>
         ) : (
           <>
-            <span className="font-display text-2xl font-bold text-violet">Lower than {lower}%</span>{" "}
+            <span className="font-display text-2xl font-bold text-ink">Lower than {lower}%</span>{" "}
             <span className="text-muted">
               of {p.count} S&amp;P 500 companies ({p.higher_count} of them paid their CEO a bigger share of operating income).
             </span>
@@ -357,9 +357,9 @@ export function ComparePanel({ report }: { report: Report }) {
           placeholder="e.g. MSFT"
           spellCheck={false}
           autoComplete="off"
-          className="w-28 rounded-xl border border-line bg-ink px-3 py-2 font-mono tracking-wider uppercase outline-none focus:border-brass"
+          className="w-28 rounded-xl border border-rule bg-page px-3 py-2 font-figures tracking-wider uppercase outline-none focus:border-blue"
         />
-        <button type="submit" className="rounded-xl bg-paper px-4 py-2 text-sm font-medium text-ink disabled:opacity-60" disabled={loading}>
+        <button type="submit" className="rounded-xl bg-ink px-4 py-2 text-sm font-medium text-page disabled:opacity-60" disabled={loading}>
           {loading ? "Pulling…" : "Compare"}
         </button>
         {quick.map((q) => (
@@ -367,7 +367,7 @@ export function ComparePanel({ report }: { report: Report }) {
             key={q}
             type="button"
             onClick={() => compare(q)}
-            className="rounded-full border border-line px-3 py-1 font-mono text-xs text-muted transition-colors hover:border-brass hover:text-paper"
+            className="rounded-[3px] border border-rule px-3 py-1 font-figures text-xs text-muted transition-colors hover:border-blue hover:text-ink"
           >
             {q}
           </button>
@@ -381,24 +381,24 @@ export function ComparePanel({ report }: { report: Report }) {
 
       {other && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-3">
-          <div className="overflow-x-auto rounded-2xl border border-line">
+          <div className="overflow-x-auto rounded-2xl border border-rule">
             <table className="w-full min-w-[600px] text-sm">
-              <thead className="bg-panel">
+              <thead className="bg-sheet">
                 <tr>
                   <th className="px-4 py-3 text-left font-medium text-muted">Metric</th>
                   {sides.map((s, i) => (
                     <th key={s.report.ticker} className="px-4 py-3 text-right font-medium">
-                      <span className={i === 0 ? "text-brass" : "text-teal"}>{s.report.ticker}</span>{" "}
+                      <span className={i === 0 ? "text-blue" : "text-green"}>{s.report.ticker}</span>{" "}
                       <span className="text-xs font-normal text-muted">{s.report.name}</span>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-t border-line">
+                <tr className="border-t border-rule">
                   <td className="px-4 py-2.5 text-muted">Latest fiscal year</td>
                   {sides.map((s) => (
-                    <td key={s.report.ticker} className="px-4 py-2.5 text-right font-mono text-xs text-muted">
+                    <td key={s.report.ticker} className="px-4 py-2.5 text-right font-figures text-xs text-muted">
                       {s.report.inputs.Revenue?.period ?? "N/A"}
                     </td>
                   ))}
@@ -407,15 +407,15 @@ export function ComparePanel({ report }: { report: Report }) {
                   const cells = sides.map((s) => row.get(s));
                   const max = Math.max(...cells.map((c) => Math.abs(c.num ?? 0)));
                   return (
-                    <tr key={row.label} className="border-t border-line hover:bg-panel/70">
+                    <tr key={row.label} className="border-t border-rule hover:bg-sheet/70">
                       <td className="px-4 py-3 font-medium">{row.label}</td>
                       {cells.map((c, i) => (
                         <td key={i} className="px-4 py-3 text-right" title={c.source}>
-                          <div className="tnum font-mono">{c.text}</div>
+                          <div className="tnum font-figures">{c.text}</div>
                           {c.num !== null && max > 0 && (
-                            <div className="mt-1.5 ml-auto h-1 w-32 overflow-hidden rounded-full bg-line">
+                            <div className="mt-1.5 ml-auto h-1 w-32 overflow-hidden rounded-[3px] bg-rule">
                               <motion.div
-                                className={`ml-auto h-full rounded-full ${i === 0 ? "bg-brass" : "bg-teal"}`}
+                                className={`ml-auto h-full ${i === 0 ? "bg-blue" : "bg-green"}`}
                                 initial={{ width: 0 }}
                                 animate={{ width: `${(Math.abs(c.num) / max) * 100}%` }}
                                 transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
@@ -466,12 +466,12 @@ export function ExportButtons({ ticker }: { ticker: string }) {
           key={k}
           onClick={() => run(k)}
           disabled={busy !== null}
-          className="rounded-full border border-brass/60 bg-brass/10 px-4 py-2 text-sm text-brass hover:bg-brass/20 disabled:opacity-60"
+          className="border border-ink px-3 py-1.5 text-sm transition-colors duration-150 hover:bg-ink hover:text-page disabled:opacity-60"
         >
           {busy === k ? "Building…" : k === "xlsx" ? "Download Excel ↓" : "Download PDF ↓"}
         </button>
       ))}
-      {error && <p className="basis-full text-right text-xs text-rose">{error}</p>}
+      {error && <p className="basis-full text-right text-xs text-red">{error}</p>}
     </>
   );
 }
