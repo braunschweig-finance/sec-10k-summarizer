@@ -119,11 +119,7 @@ def prompt(name, latest, prior):
 
 
 def parse(text):
-    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL)
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not m:
-        raise ValueError("no JSON in the reply")
-    data = json.loads(m.group(0))
+    data = ai_client.parse_json(text) if isinstance(text, str) else ai_client.reply_json(text)
     overall = str(data.get("overall", "")).strip().lower()
     g = data.get("guidance") or {}
     change = str(g.get("change", "")).strip().lower()
@@ -180,7 +176,7 @@ def compare(rel):
     latest, prior = rel["latest"], rel["prior"]
     reply = ai_client.chat(prompt(rel["name"], latest, prior), system=SYSTEM, json_mode=True, max_tokens=4000)
     try:
-        result = parse(reply["text"])
+        result = parse(reply)
     except (ValueError, json.JSONDecodeError) as e:
         raise ai_client.AIError(f"The AI's reply couldn't be read ({e}). Try again.")
     check_quotes(result["guidance"], latest["text"], prior["text"])
