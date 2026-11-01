@@ -159,11 +159,7 @@ def prompt(question, name, period, found):
 
 
 def parse(text):
-    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL)
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not m:
-        raise ValueError("no JSON in the reply")
-    data = json.loads(m.group(0))
+    data = ai_client.parse_json(text) if isinstance(text, str) else ai_client.reply_json(text)
     found = data.get("found")
     found = found if isinstance(found, bool) else str(found).strip().lower() == "true"
     return {"found": found, "answer": str(data.get("answer") or "").strip(), "quote": str(data.get("quote") or "").strip()}
@@ -199,7 +195,7 @@ def answer(doc, question):
                 "quote": "", "verified": False, "model": None}
     reply = ai_client.chat(prompt(question, doc["name"], doc["period"], found), system=SYSTEM, json_mode=True, max_tokens=2000)
     try:
-        result = parse(reply["text"])
+        result = parse(reply)
     except (ValueError, json.JSONDecodeError) as e:
         raise ai_client.AIError(f"The AI's reply couldn't be read ({e}). Try again.")
     verified = bool(result["quote"]) and quote_in_filing(result["quote"], doc["text"])

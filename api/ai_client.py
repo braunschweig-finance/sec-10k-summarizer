@@ -12,7 +12,9 @@ Settings (environment variables):
 LM Studio, Ollama, vLLM (what most university GPU servers run) and OpenAI all speak the same "chat completions"
 format, so one code path covers all of them. Gemini keeps Google's own library, which the live site already uses.
 """
+import json
 import os
+import re
 import time
 
 import httpx
@@ -90,12 +92,17 @@ def _openai_compatible(s, prompt, system, json_mode, max_tokens):
         body["max_tokens"] = max_tokens
     if json_mode:
         body["response_format"] = {"type": "json_object"}
+    if s["provider"] != "openai":
+        # Qwen-style models "think" first by default, which spends the token budget before the answer.
+        # vLLM, LM Studio and LiteLLM proxies pass this through to the model; others ignore it.
+        body["chat_template_kwargs"] = {"enable_thinking": False}
     started = time.time()
     try:
         r = httpx.post(f"{s['base_url']}/chat/completions", json=body, headers=_headers(s), timeout=TIMEOUT)
-        if r.status_code == 400 and json_mode:
-            # Some servers (older LM Studio builds) reject json_object; the prompt asks for JSON anyway
-            body.pop("response_format")
+        if r.status_code == 400 and ("response_format" in body or "chat_template_kwargs" in body):
+            # Some servers reject json_object or the thinking switch; the prompt asks for JSON anyway
+            body.pop("response_format", None)
+            body.pop("chat_template_kwargs", None)
             r = httpx.post(f"{s['base_url']}/chat/completions", json=body, headers=_headers(s), timeout=TIMEOUT)
     except httpx.HTTPError as e:
         raise AIError(f"Can't reach the AI server at {s['base_url']} ({e}). Is it running?")
@@ -105,13 +112,53 @@ def _openai_compatible(s, prompt, system, json_mode, max_tokens):
         raise AIError(f"The AI server returned {r.status_code}: {r.text[:300]}")
     data = r.json()
     usage = data.get("usage") or {}
+    choice = data["choices"][0]
+    msg = choice.get("message") or {}
+    text = msg.get("content") or ""
+    if not text.strip():
+        # Some servers put a thinking model's whole output in a separate field and leave content empty
+        text = msg.get("reasoning_content") or msg.get("reasoning") or ""
     return {
-        "text": data["choices"][0]["message"]["content"] or "",
+        "text": text,
         "usage": {"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")} if usage else None,
         "model": data.get("model") or model,
         "provider": s["provider"],
+        "finish": choice.get("finish_reason"),
         "seconds": round(time.time() - started, 1),
     }
+
+
+def parse_json(text):
+    """The JSON object in a model's reply. Handles what models wrap around it: a <think> block (closed or cut off),
+    ```json fences, and sentences before or after. Takes the last complete object, since a model that thinks out
+    loud may write draft objects before its final one."""
+    text = re.sub(r"<think>.*?(</think>|$)", "", text or "", flags=re.DOTALL)
+    text = re.sub(r"```(?:json)?", "", text)
+    decoder, found, pos = json.JSONDecoder(), None, text.find("{")
+    while pos != -1:
+        try:
+            obj, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pos = text.find("{", pos + 1)
+            continue
+        if isinstance(obj, dict):
+            found = obj
+        pos = text.find("{", end)  # past this object, so its nested objects aren't taken for the answer
+    if found is None:
+        raise ValueError("no JSON in the reply")
+    return found
+
+
+def reply_json(reply):
+    """parse_json on a chat() reply, with a plain reason when it fails."""
+    try:
+        return parse_json(reply["text"])
+    except ValueError:
+        if reply.get("finish") == "length":
+            raise ValueError("the model ran out of its word limit before finishing")
+        if not (reply["text"] or "").strip():
+            raise ValueError("the model sent back an empty reply")
+        raise
 
 
 def _gemini(s, prompt, system):

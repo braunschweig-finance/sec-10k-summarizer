@@ -141,3 +141,45 @@ def test_read_proxy_end_to_end(monkeypatch):
     assert not by["independent_chair"]["verified"]
     assert by["written_consent"]["answer"] == "not disclosed" and by["written_consent"]["model"] is None  # no AI call
     assert out["score"] == {"friendly": 1, "answered": 1, "asked": len(gp.POLICIES)}
+
+
+# ---------- Reading JSON out of model replies (Qwen on the ISU server, 2026-11-01) ----------
+
+@pytest.mark.parametrize("reply", [
+    '{"found": true, "answer": "a"}',
+    '<think>The user wants {debt}. Let me check.</think>\n\n```json\n{"found": true, "answer": "a"}\n```',
+    'Here is the answer:\n{"found": true, "answer": "a"}\nHope this helps.',
+    '<think>draft: {"found": false} hmm, no wait</think>{"found": true, "answer": "a"}',
+    '{"found": false}\nCorrection: {"found": true, "answer": "a"}',
+])
+def test_parse_json_finds_the_answer(reply):
+    assert ai_client.parse_json(reply) == {"found": True, "answer": "a"}
+
+
+def test_parse_json_keeps_nested_objects_whole():
+    assert ai_client.parse_json('{"overall": "up", "guidance": {"change": "raised"}}')["overall"] == "up"
+
+
+def test_reply_json_explains_failures():
+    with pytest.raises(ValueError, match="word limit"):
+        ai_client.reply_json({"text": "<think>still thinking about the", "finish": "length"})
+    with pytest.raises(ValueError, match="empty"):
+        ai_client.reply_json({"text": "", "finish": "stop"})
+
+
+def test_thinking_switched_off_and_reasoning_field_read(monkeypatch):
+    monkeypatch.setenv("AI_BASE_URL", "https://llm.example.edu")
+    monkeypatch.setenv("AI_MODEL", "qwen")
+    sent = {}
+
+    def post(url, json=None, headers=None, timeout=None):
+        sent.setdefault("bodies", []).append(dict(json))
+        if "chat_template_kwargs" in json:   # a proxy that rejects the extra field
+            return httpx.Response(400, json={"error": "unsupported"}, request=httpx.Request("POST", url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": None, "reasoning_content": '{"a": 1}'},
+                                                      "finish_reason": "stop"}]}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(ai_client.httpx, "post", post)
+    r = ai_client.chat("hi", json_mode=True)
+    assert sent["bodies"][0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "chat_template_kwargs" not in sent["bodies"][1] and "response_format" not in sent["bodies"][1]
+    assert ai_client.reply_json(r) == {"a": 1}

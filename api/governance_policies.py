@@ -115,11 +115,7 @@ def prompt(policy, excerpts):
 
 def parse(text):
     """The JSON object in the model's reply. Small models sometimes wrap it in ``` or add a thinking block first."""
-    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL)
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not m:
-        raise ValueError("no JSON in the reply")
-    data = json.loads(m.group(0))
+    data = ai_client.parse_json(text) if isinstance(text, str) else ai_client.reply_json(text)
     answer = str(data.get("answer", "")).strip().lower()
     if answer not in ("yes", "no", "not disclosed"):
         answer = "not disclosed"
@@ -134,7 +130,7 @@ def read_policy(policy, text):
                 "verified": False, "model": None, "seconds": 0}
     try:
         reply = ai_client.chat(prompt(policy, excerpts), system=SYSTEM, json_mode=True, max_tokens=4000)
-        result = parse(reply["text"])
+        result = parse(reply)
     except ValueError as e:
         return {**base, "answer": "error", "detail": f"The model's reply couldn't be read ({e}).", "quote": "",
                 "verified": False, "model": None, "seconds": 0}
