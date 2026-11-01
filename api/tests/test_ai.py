@@ -182,9 +182,9 @@ def test_thinking_switched_off_and_reasoning_field_read(monkeypatch):
     r = ai_client.chat("hi", json_mode=True)
     first = sent["bodies"][0]
     # Only standard fields: ISU's LiteLLM proxy returns a 500 on chat_template_kwargs (2026-11-01)
-    assert set(first) == {"model", "messages", "temperature", "response_format"}
+    assert set(first) == {"model", "messages", "temperature", "response_format", "reasoning_effort"}
     assert first["messages"][-1]["content"].endswith("/no_think")
-    assert "response_format" not in sent["bodies"][1]
+    assert "response_format" not in sent["bodies"][1] and "reasoning_effort" not in sent["bodies"][1]
     assert ai_client.reply_json(r) == {"a": 1}
 
 
@@ -193,4 +193,10 @@ def test_openai_gets_the_prompt_unchanged(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     sent = fake_server(monkeypatch, "x")
     ai_client.chat("hi")
-    assert sent["body"]["messages"][-1]["content"] == "hi"
+    assert sent["body"]["messages"][-1]["content"] == "hi" and "reasoning_effort" not in sent["body"]
+
+
+def test_status_lists_models(monkeypatch):
+    fake_server(monkeypatch, "x", models=("ilstu-coder", "ilstu-fast"))
+    assert ai_client.describe(list_models=True)["available_models"] == ["ilstu-coder", "ilstu-fast"]
+    assert "available_models" not in ai_client.describe()
