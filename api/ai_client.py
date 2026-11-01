@@ -95,18 +95,23 @@ def first_model(s):
 
 def _openai_compatible(s, prompt, system, json_mode, max_tokens):
     model = s["model"] or first_model(s)
-    if s["provider"] != "openai":
+    # Claude through a proxy (ISU's LiteLLM -> Bedrock): Sonnet 5.5 rejects temperature 0, and LiteLLM turns
+    # reasoning_effort into a thinking budget that newer Claude models reject. Send it the plain request.
+    plain = s["provider"] == "openai" or "claude" in model.lower()
+    if not plain:
         # Qwen-style models "think" first by default, which spends the token budget before the answer. "/no_think"
         # is Qwen's in-prompt switch: plain text, so no server can reject it (ISU's LiteLLM proxy fails on the
         # chat_template_kwargs field with a 500), and other models ignore it.
         prompt = f"{prompt}\n\n/no_think"
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
-    body = {"model": model, "messages": messages, "temperature": 0}
+    body = {"model": model, "messages": messages}
+    if not plain:
+        body["temperature"] = 0
     if max_tokens:
         body["max_tokens"] = max_tokens
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    if s["provider"] != "openai":
+    if not plain:
         # The standard way to ask a reasoning model to think less; part of the OpenAI format, so proxies accept it
         body["reasoning_effort"] = "low"
     started = time.time()

@@ -200,3 +200,13 @@ def test_status_lists_models(monkeypatch):
     fake_server(monkeypatch, "x", models=("ilstu-coder", "ilstu-fast"))
     assert ai_client.describe(list_models=True)["available_models"] == ["ilstu-coder", "ilstu-fast"]
     assert "available_models" not in ai_client.describe()
+
+
+def test_claude_through_a_proxy_gets_a_plain_request(monkeypatch):
+    # ISU's proxy: Sonnet 5.5 400s on temperature=0 (2026-11-01)
+    monkeypatch.setenv("AI_BASE_URL", "https://llm.example.edu")
+    monkeypatch.setenv("AI_MODEL", "claude-sonnet")
+    sent = fake_server(monkeypatch, "x")
+    ai_client.chat("hi", json_mode=True)
+    assert set(sent["body"]) == {"model", "messages", "response_format"}
+    assert sent["body"]["messages"][-1]["content"] == "hi"
