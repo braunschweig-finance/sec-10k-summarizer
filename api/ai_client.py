@@ -86,23 +86,23 @@ def first_model(s):
 
 def _openai_compatible(s, prompt, system, json_mode, max_tokens):
     model = s["model"] or first_model(s)
+    if s["provider"] != "openai":
+        # Qwen-style models "think" first by default, which spends the token budget before the answer. "/no_think"
+        # is Qwen's in-prompt switch: plain text, so no server can reject it (ISU's LiteLLM proxy fails on the
+        # chat_template_kwargs field with a 500), and other models ignore it.
+        prompt = f"{prompt}\n\n/no_think"
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
     body = {"model": model, "messages": messages, "temperature": 0}
     if max_tokens:
         body["max_tokens"] = max_tokens
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    if s["provider"] != "openai":
-        # Qwen-style models "think" first by default, which spends the token budget before the answer.
-        # vLLM, LM Studio and LiteLLM proxies pass this through to the model; others ignore it.
-        body["chat_template_kwargs"] = {"enable_thinking": False}
     started = time.time()
     try:
         r = httpx.post(f"{s['base_url']}/chat/completions", json=body, headers=_headers(s), timeout=TIMEOUT)
-        if r.status_code == 400 and ("response_format" in body or "chat_template_kwargs" in body):
-            # Some servers reject json_object or the thinking switch; the prompt asks for JSON anyway
-            body.pop("response_format", None)
-            body.pop("chat_template_kwargs", None)
+        if json_mode and (r.status_code == 400 or (r.status_code >= 500 and "response_format" in r.text)):
+            # Some servers reject json_object; the prompt asks for JSON anyway
+            body.pop("response_format")
             r = httpx.post(f"{s['base_url']}/chat/completions", json=body, headers=_headers(s), timeout=TIMEOUT)
     except httpx.HTTPError as e:
         raise AIError(f"Can't reach the AI server at {s['base_url']} ({e}). Is it running?")

@@ -174,12 +174,23 @@ def test_thinking_switched_off_and_reasoning_field_read(monkeypatch):
 
     def post(url, json=None, headers=None, timeout=None):
         sent.setdefault("bodies", []).append(dict(json))
-        if "chat_template_kwargs" in json:   # a proxy that rejects the extra field
+        if "response_format" in json:   # a proxy that rejects JSON mode
             return httpx.Response(400, json={"error": "unsupported"}, request=httpx.Request("POST", url))
         return httpx.Response(200, json={"choices": [{"message": {"content": None, "reasoning_content": '{"a": 1}'},
                                                       "finish_reason": "stop"}]}, request=httpx.Request("POST", url))
     monkeypatch.setattr(ai_client.httpx, "post", post)
     r = ai_client.chat("hi", json_mode=True)
-    assert sent["bodies"][0]["chat_template_kwargs"] == {"enable_thinking": False}
-    assert "chat_template_kwargs" not in sent["bodies"][1] and "response_format" not in sent["bodies"][1]
+    first = sent["bodies"][0]
+    # Only standard fields: ISU's LiteLLM proxy returns a 500 on chat_template_kwargs (2026-11-01)
+    assert set(first) == {"model", "messages", "temperature", "response_format"}
+    assert first["messages"][-1]["content"].endswith("/no_think")
+    assert "response_format" not in sent["bodies"][1]
     assert ai_client.reply_json(r) == {"a": 1}
+
+
+def test_openai_gets_the_prompt_unchanged(monkeypatch):
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    sent = fake_server(monkeypatch, "x")
+    ai_client.chat("hi")
+    assert sent["body"]["messages"][-1]["content"] == "hi"
