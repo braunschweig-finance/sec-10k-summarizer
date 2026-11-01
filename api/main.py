@@ -441,7 +441,7 @@ def company_grade(ticker: str):
 @app.get("/api/ai-status")
 def ai_status():
     """Which AI the server is set to use (provider, address, model). The key itself is never shown."""
-    return ai_client.describe()
+    return ai_client.describe(list_models=True)
 
 
 _policies = OrderedDict()

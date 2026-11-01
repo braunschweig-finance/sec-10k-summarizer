@@ -62,20 +62,29 @@ def check_sec(t):
 
 
 def check_live(t):
+    print(f"  live AI: {httpx.get(f'{LIVE}/api/ai-status', timeout=60).json()}")
+    # A slow or failed tone check doesn't stop the questions from being asked
     started = time.time()
-    r = httpx.get(f"{LIVE}/api/earnings-tone/{t}", timeout=200)
-    print(f"  tone {r.status_code} in {time.time() - started:.1f}s")
-    if r.status_code == 200:
-        b = r.json()
-        print(f"    {b.get('latest', {}).get('filed')} vs {(b.get('prior') or {}).get('filed')}: {b.get('overall')} | guidance "
-              f"{(b.get('guidance') or {}).get('change')} | {b.get('summary') or b.get('reason')}")
-        for s in b.get("shifts") or []:
-            print(f"      {s['direction']:<15} {s['topic']:<20} verified={s['verified']}  {s['latest_quote'][:120]}")
-    else:
-        print(f"    {r.text[:300]}")
+    try:
+        r = httpx.get(f"{LIVE}/api/earnings-tone/{t}", timeout=300)
+        print(f"  tone {r.status_code} in {time.time() - started:.1f}s")
+        if r.status_code == 200:
+            b = r.json()
+            print(f"    {b.get('latest', {}).get('filed')} vs {(b.get('prior') or {}).get('filed')}: {b.get('overall')} | guidance "
+                  f"{(b.get('guidance') or {}).get('change')} | {b.get('summary') or b.get('reason')}")
+            for s in b.get("shifts") or []:
+                print(f"      {s['direction']:<15} {s['topic']:<20} verified={s['verified']}  {s['latest_quote'][:120]}")
+        else:
+            print(f"    {r.text[:300]}")
+    except httpx.HTTPError as e:
+        print(f"  tone failed after {time.time() - started:.0f}s: {e!r}")
     for q in QUESTIONS[:2]:
         started = time.time()
-        r = httpx.post(f"{LIVE}/api/ask", json={"ticker": t, "question": q}, timeout=200)
+        try:
+            r = httpx.post(f"{LIVE}/api/ask", json={"ticker": t, "question": q}, timeout=300)
+        except httpx.HTTPError as e:
+            print(f"  ask failed after {time.time() - started:.0f}s: {e!r}  {q}")
+            continue
         b = r.json()
         print(f"  ask {r.status_code} in {time.time() - started:.1f}s  {q}")
         print(f"    found={b.get('found')} verified={b.get('verified')} {str(b.get('answer') or b.get('detail'))[:220]}")

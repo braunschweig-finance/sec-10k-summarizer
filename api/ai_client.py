@@ -49,11 +49,20 @@ def settings():
     return {"provider": provider, "base_url": base_url, "api_key": api_key, "model": model}
 
 
-def describe():
-    """Where the AI runs, for the /api/ai-status page. Never includes the key."""
+def describe(list_models=False):
+    """Where the AI runs, for the /api/ai-status page. Never includes the key. With list_models, also the models the
+    server offers, so a faster or non-thinking one can be picked for AI_MODEL."""
     s = settings()
-    return {"provider": s["provider"], "base_url": s["base_url"] or None, "model": s["model"] or None,
-            "has_key": bool(s["api_key"])}
+    out = {"provider": s["provider"], "base_url": s["base_url"] or None, "model": s["model"] or None,
+           "has_key": bool(s["api_key"])}
+    if list_models and s["base_url"]:
+        try:
+            r = httpx.get(f"{s['base_url']}/models", headers=_headers(s), timeout=10)
+            r.raise_for_status()
+            out["available_models"] = [m["id"] for m in r.json().get("data", [])]
+        except (httpx.HTTPError, ValueError, KeyError) as e:
+            out["available_models"] = f"couldn't list ({type(e).__name__})"
+    return out
 
 
 def chat(prompt, system=None, json_mode=False, max_tokens=None):
@@ -97,12 +106,17 @@ def _openai_compatible(s, prompt, system, json_mode, max_tokens):
         body["max_tokens"] = max_tokens
     if json_mode:
         body["response_format"] = {"type": "json_object"}
+    if s["provider"] != "openai":
+        # The standard way to ask a reasoning model to think less; part of the OpenAI format, so proxies accept it
+        body["reasoning_effort"] = "low"
     started = time.time()
     try:
         r = httpx.post(f"{s['base_url']}/chat/completions", json=body, headers=_headers(s), timeout=TIMEOUT)
-        if json_mode and (r.status_code == 400 or (r.status_code >= 500 and "response_format" in r.text)):
-            # Some servers reject json_object; the prompt asks for JSON anyway
-            body.pop("response_format")
+        optional = [k for k in ("response_format", "reasoning_effort") if k in body]
+        if optional and (r.status_code == 400 or r.status_code >= 500):
+            # Some servers reject json_object or reasoning_effort; the prompt asks for JSON anyway
+            for k in optional:
+                body.pop(k)
             r = httpx.post(f"{s['base_url']}/chat/completions", json=body, headers=_headers(s), timeout=TIMEOUT)
     except httpx.HTTPError as e:
         raise AIError(f"Can't reach the AI server at {s['base_url']} ({e}). Is it running?")
