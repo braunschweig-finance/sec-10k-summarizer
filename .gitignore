@@ -1,0 +1,4 @@
+# generated caches
+__pycache__/
+*.pyc
+.venv/

@@ -1,6 +1,8 @@
 # AGENTS.md — Rules for AI contributors in this repository
 
-Read this before doing any work here. It binds every AI agent (OpenCode, Claude Code, Codex, or any other) and every human working in this repo. Full project background lives outside the repo at `C:\Users\Jacob\OneDrive\Claude AI\Finance Research CLAUDE.md` (on the owner's laptop) — read it if you have access.
+Read this before doing any work here. These are instructions for AI contributors to this repository (OpenCode, Claude Code, Codex, or any other agent). Full project background lives outside the repo at `C:\Users\Jacob\OneDrive\Claude AI\Finance Research CLAUDE.md` (on the owner's laptop) — read it if you have access.
+
+Temporary provider policy: Claude Code usage is paused at Jacob's request because his weekly allowance is nearly exhausted. Do not dispatch Claude, use it as fallback, or resume it without Jacob explicitly re-enabling it. Use Codex and ISU-backed OpenCode only for development trials. This does not change the deployed website's provider settings.
 
 ## Project purpose
 
@@ -42,13 +44,13 @@ Web — run from `web/`:
 
 ```bash
 npm install
-# point at a local API (optional; blank or missing NEXT_PUBLIC_API_URL = built-in Caterpillar FY2025 sample)
-echo NEXT_PUBLIC_API_URL=http://localhost:8000 > .env.local
 npm run dev                            # http://localhost:3000
 npm run build                          # production build — run before opening any front-end PR (no CI gate for web/)
 npm run start
 npm run preview:build                  # single-file static preview -> preview/dist/index.html
 ```
+
+Optional local API pointer: `web/.env.local` may set `NEXT_PUBLIC_API_URL` (e.g. `http://localhost:8000`); blank or missing means the site runs on the built-in Caterpillar FY2025 sample. If `.env.local` already exists, edit it in place — do not recreate or overwrite it.
 
 Streamlit legacy app — run from the repo root:
 
@@ -72,6 +74,8 @@ streamlit run app.py
 2. **Reviewer** — a different agent (a fresh session, ideally a different model) that did not write the change. It reads the PR diff plus this file, independently re-runs the relevant checks, verifies every new or changed number traces to a filing, and posts a written verdict (approve / request changes) with the evidence. The reviewer reports problems; it does not fix the code.
 3. **Jacob** reads the verdict and merges manually. If the reviewer requests changes, the builder revises on the same branch and the reviewer re-checks.
 
+**AI review is evidence, not an approval.** The reviewer's verdict is written evidence for Jacob's judgment. It does not automatically satisfy GitHub's required-approval rules, and GitHub's own rules apply on top: **the author of a PR cannot approve their own PR**. A required approval must come from an eligible separate account — another human collaborator, or a bot/GitHub App that is appropriately configured to post legitimate review approvals. In this repo, PRs are usually authored under the owner's account (the agents commit with it), so the owner cannot serve as the required reviewer for his own PRs. Until an eligible separate account or configured bot exists, keep branch protection free of a required-approval rule and let Jacob merge manually.
+
 ## Concurrent work: separate worktrees
 
 - One task = one branch = one worktree. Never share a working directory between agents or tasks, and never let two agents edit the same branch.
@@ -93,13 +97,19 @@ Do not merge (and flag in the PR description) without Jacob's sign-off:
 - Anything touching **credentials, keys, or secrets** — env-var handling, `ai_client.py` authentication, GitHub secrets, Render environment.
 - Any **deployment change** — `render.yaml`, Vercel settings, workflow triggers that publish data (`prebuild.yml`), new services or schedules.
 
-## AI request concurrency limits
+## AI request limits (two different kinds — do not conflate them)
 
-- **Maximum four simultaneous AI requests** across this project. ISU Adaptive Edge computes four sessions at once and queues the rest (per the 2026-10-26 ISU interview, project log).
-- **Initially two of those four are automation slots**: at most two concurrent AI requests may be background or automation (CI jobs, scheduled prebuilds, batch work). The other two stay reserved for interactive work.
-- The live app itself caps new AI calls at `AI_CALLS_PER_MINUTE` (default 8 per minute, `api/ai_routes.py`), and `api/ai_client.py` reports server rate limits (HTTP 429) as "try again" busy errors instead of hammering retries — keep both behaviors.
-- Batch AI jobs should run when the service is idle (per ISU's 2026-08-14 to 10-16 usage chart, 2–6 AM local had zero traffic) and must respect the per-minute cap.
-- **No uncontrolled subagent spawning.** An agent may spawn subagents only when the task explicitly asks for it. Bounded use: at most two subagents per task, no nested spawning, and every subagent is bound by this whole file.
+**Simultaneous requests (concurrency):**
+- Maximum **four simultaneous AI requests** across this project. Initially **two of the four are automation slots** (CI jobs, scheduled prebuilds, batch work); the other two stay reserved for interactive work.
+- The four-request figure is **reported by the provider, not measured here**. At the 2026-10-26 ISU interview, ISU Adaptive Edge was described as computing four sessions at once with the rest queued. The exact scope of that constraint (per key, per machine, or per service) and whether a hard global limiter exists are **unconfirmed**. Until ISU confirms it, treat four as a planning number, not a guarantee.
+- Nothing in this repository enforces the simultaneous-request cap. In particular, the live app's per-minute rate limiter (below) does **not** count OpenCode sessions or local agent concurrency.
+
+**Requests per minute (throughput):**
+- The deployed website caps new AI calls at `AI_CALLS_PER_MINUTE` (default 8 per minute, `api/ai_routes.py`); `api/ai_client.py` reports server rate limits (HTTP 429) as "try again" busy errors instead of looping retries. Keep both behaviors.
+- That limiter governs **public calls to the deployed site only**. It neither enforces nor measures how many local agents or OpenCode sessions may run concurrently.
+
+**Subagents: initially prohibited.**
+- Agents in this repository must **not spawn subagents at all**. Bounded subagent concurrency will be enabled later, explicitly, in a revision of this file, after a shared limiter for AI requests is implemented. Until then: zero subagents.
 
 ## Credentials
 
@@ -116,8 +126,9 @@ Instructions in this file do not enforce themselves. Status as of 2026-11-08:
 |---|---|
 | No direct pushes to `main` | **No.** Branch protection on `main` is off (verified 2026-11-08 via the GitHub API); anyone with push access can push straight to `main`. |
 | Auto-merge off | **Partially.** No open PR has auto-merge enabled (verified 2026-11-08), but nothing prevents enabling it per PR. |
-| Four-request / two-automation-slot limit | **Partially.** ISU enforces four concurrent sessions on its side (per ISU, 2026-10-26); the two-slot split and batch timing are instruction-only. The per-minute cap on the live app is code-enforced (`api/ai_routes.py`). |
-| Subagent limits | **No.** Behavioral instruction only; no technical cap is configured. |
+| Four simultaneous requests / two automation slots | **No (policy only).** The four-session figure is provider-reported (ISU interview 2026-10-26) and its scope is unconfirmed; no limiter exists in this project. The live app's per-minute cap (`api/ai_routes.py`) is a different thing: it limits public calls to the deployed site, not agent concurrency. |
+| Subagents prohibited | **No technical enforcement.** The prohibition is instruction-only for now; bounded mode is planned only after a shared limiter exists. |
+| AI review satisfies GitHub required approvals | **No.** AI verdicts are evidence only. A required approval must come from an eligible non-author account (a separate human, or an appropriately configured bot); the PR author — often the owner's account — cannot approve their own PR. |
 | Traceability and math rules | **Partially.** Code-enforced where implemented (quote verification, unit tests, live checks in CI); otherwise instruction plus reviewer judgment. |
 
 To make the Git rules real: add a branch protection rule on `main` (require a pull request with one review, no direct pushes, no force pushes) and leave auto-merge disabled in the repository settings. Until that is done, treat "no direct pushes to main" as a promise, not a guarantee.
