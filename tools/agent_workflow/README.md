@@ -27,7 +27,7 @@ State defaults to `%LOCALAPPDATA%/sec-10k-agent-workflow/state.db`, outside
 the repository (home directory fallback if `LOCALAPPDATA` is unset).
 Worker result files also use the state directory.
 Every subcommand accepts `--db PATH`; put it after the subcommand and use
-the same external database path for add, list, run, and resume.
+the same external database path for add, list, run, recover, and resume.
 
 ## Limits and current live status
 
@@ -60,10 +60,13 @@ python tools/agent_workflow/controller.py resume
 `resume` only clears the pause; it does not retry or repair jobs, enable live
 adapters, or re-enable Claude. `run --timeout SECONDS` sets the per-job timeout
 (default 600 seconds), relevant only to live execution once enabled.
-On Windows, timeout handling kills only the direct child, not its process tree;
-descendants may survive. If the controller is interrupted during execution,
-jobs can remain `running`: recovery is manual, with no automatic reconciliation
-or recovery CLI. Check for surviving workers before Jacob repairs queue state.
+The Windows runner contains workers and descendants in kill-on-close Job Objects
+before execution. Unsupported platforms refuse real dispatch. Controller death
+before assignment can leave an inert suspended process; this remains documented.
+After interruption, `recover` verifies the recorded owner is provably dead,
+marks abandoned jobs `interrupted`, and pauses. Living or uncertain owners cause
+refusal. It never kills by stored PID or automatically retries/requeues jobs.
+Investigate before `resume`; interrupted jobs remain terminal.
 
 ## Help and offline tests
 
@@ -72,10 +75,11 @@ python tools/agent_workflow/controller.py --help
 python tools/agent_workflow/controller.py add --help
 python tools/agent_workflow/controller.py list --help
 python tools/agent_workflow/controller.py run --help
+python tools/agent_workflow/controller.py recover --help
 python tools/agent_workflow/controller.py resume --help
 python -m unittest discover -s tools/agent_workflow/tests -p "test_controller.py" -v
 ```
 
-Tests use fake adapters/workers, with no real AI CLI or network calls.
+Tests use fake adapters and local Python fixtures, with no real AI or network calls.
 The controller does not install, push, merge, deploy, store credentials,
 or spawn subagents. Repository policy still prohibits subagents.
