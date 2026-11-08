@@ -76,7 +76,9 @@ def _timed(step, ticker, fn):
 # Python keeps memory it has used. Before this, one big company in the server process meant Render restarted the
 # whole server mid-request. Now the child hands its memory back when it exits, and if a filing is too big, the
 # system stops only that child (it volunteers via oom_score_adj) and the page gets a plain explanation.
-_fork = multiprocessing.get_context("fork")
+_fork = multiprocessing.get_context(
+    "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
+)
 _child_slot = threading.Semaphore(1)
 CHILD_LIMIT = 120  # seconds; a stuck child is stopped so it can't hold the slot forever
 
