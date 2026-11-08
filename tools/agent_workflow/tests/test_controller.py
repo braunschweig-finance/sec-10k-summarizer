@@ -314,7 +314,8 @@ class ControllerTests(unittest.TestCase):
         for argv, kw in runner.calls:
             self.assertIsInstance(argv, list, "no shell interpolation")
             self.assertFalse(kw.get("shell"))
-            self.assertEqual(kw["cwd"], self.wt)
+            # Windows runners can expose the same directory via an 8.3 alias.
+            self.assertTrue(os.path.samefile(kw["cwd"], self.wt))
 
 
 if __name__ == "__main__":
