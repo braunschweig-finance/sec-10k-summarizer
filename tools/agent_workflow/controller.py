@@ -23,13 +23,9 @@ Limits, and what they do NOT claim:
 - Never pushes, merges, deploys, installs, stores credentials, or
   spawns subagents.
 
-Known unresolved limitations (NOT solved; do not claim otherwise):
-- Windows process-tree timeout: a job timeout kills only the direct
-  child process. If a CLI spawns its own children (node-based CLIs do),
-  those can survive and keep running after the timeout.
-- Interrupted-job recovery: if the controller process is killed while a
-  job is running, the job stays 'running' in the queue; clearing it is
-  manual today. There is no automatic recovery.
+Lifecycle: Windows workers use kill-on-close Job Objects before execution.
+Unsupported platforms refuse launch. Explicit recover interrupts only jobs whose
+recorded owner is provably dead, and pauses without retrying.
 
 Usage (from the repo root):
   python tools\\agent_workflow\\controller.py add --task "..." --kind builder --provider codex --worktree ..\\wt
@@ -41,12 +37,14 @@ Usage (from the repo root):
 from __future__ import annotations
 
 import argparse
+import processes
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -202,6 +200,7 @@ class Controller:
         self.max_jobs = max_jobs
         self.ceiling = ceiling
         self.adapters = dict(ADAPTERS if adapters is None else adapters)
+        self.owner = processes.identity()
         self._init_db()
 
     @contextmanager
@@ -223,6 +222,7 @@ class Controller:
 
     def _init_db(self):
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task TEXT NOT NULL,
@@ -236,6 +236,31 @@ class Controller:
                 output TEXT)""")
             db.execute("""CREATE TABLE IF NOT EXISTS controller_state (
                 key TEXT PRIMARY KEY, value TEXT)""")
+            columns = {r[1] for r in db.execute("PRAGMA table_info(jobs)")}
+            for name, kind in (("owner_host", "TEXT"), ("owner_pid", "INTEGER"),
+                               ("owner_birth", "TEXT")):
+                if name not in columns:
+                    db.execute("ALTER TABLE jobs ADD COLUMN %s %s" % (name, kind))
+
+    def recover(self) -> List[int]:
+        """Explicit recovery; unknown legacy owners require manual investigation."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id, owner_host, owner_pid, owner_birth "
+                              "FROM jobs WHERE status='running'").fetchall()
+            for jid, host, pid, birth in rows:
+                state = processes.owner_state(host, pid, birth)
+                if state != "dead":
+                    raise ControllerError("recovery refused: job %d owner %s" % (jid, state))
+            for jid, *_ in rows:
+                db.execute("UPDATE jobs SET status='interrupted', finished_at=?, "
+                           "output='owner abandoned; explicit recovery; no retry' WHERE id=?",
+                           (time.time(), jid))
+            if rows:
+                db.execute("INSERT OR REPLACE INTO controller_state VALUES ('paused', '1')")
+                db.execute("INSERT OR REPLACE INTO controller_state VALUES "
+                           "('pause_reason', 'interrupted jobs recovered; investigate before resume')")
+            return [r[0] for r in rows]
 
     # ---- queue ----
 
@@ -290,8 +315,9 @@ class Controller:
                 db.execute("COMMIT")
                 return None
             db.execute(
-                "UPDATE jobs SET status='running', started_at=? "
-                "WHERE id=? AND status='pending'", (time.time(), chosen))
+                "UPDATE jobs SET status='running', started_at=?, "
+                "owner_host=?, owner_pid=?, owner_birth=? "
+                "WHERE id=? AND status='pending'", (time.time(), *self.owner, chosen))
             db.execute("COMMIT")
             return int(chosen)
 
@@ -304,7 +330,7 @@ class Controller:
             db.execute(
                 "UPDATE jobs SET status=?, finished_at=?, exit_code=?, output=? "
                 "WHERE id=?", (status, time.time(), exit_code, output, job_id))
-            if status in ("failed", "timed_out"):
+            if status in ("failed", "timed_out", "interrupted"):
                 db.execute("INSERT OR IGNORE INTO controller_state (key, value) "
                            "VALUES ('paused', '1')")
                 db.execute("INSERT OR IGNORE INTO controller_state (key, value) "
@@ -398,7 +424,7 @@ class Controller:
 
     def run(self, execute: bool = False, timeout: float = 600.0,
             instructions: Path = DEFAULT_INSTRUCTIONS,
-            runner: Callable = subprocess.run) -> List[int]:
+            runner: Callable = processes.run) -> List[int]:
         """One dispatch pass.
 
         Dry-run (default): strictly read-only preview of pending jobs;
@@ -412,36 +438,50 @@ class Controller:
         if not execute:
             return [job_id for job_id, _ in self.preview(instructions)]
         futures = []
+        cancel = threading.Event()
         with ThreadPoolExecutor(max_workers=self.max_jobs) as pool:
-            while True:
-                job_id = self.claim()
-                if job_id is None:
-                    break
-                job = self.get(job_id)
-                adapter = self.adapters[job.provider]
-                if not adapter.live_enabled:
-                    self.refuse(job_id, adapter.live_disabled_reason)
-                    break  # controller is paused; end this pass
-                futures.append(pool.submit(self._run_live, job, timeout,
-                                           instructions, runner))
-            return [fut.result() for fut in as_completed(futures)]
+            try:
+                while True:
+                    job_id = self.claim()
+                    if job_id is None:
+                        break
+                    job = self.get(job_id)
+                    adapter = self.adapters[job.provider]
+                    if not adapter.live_enabled:
+                        self.refuse(job_id, adapter.live_disabled_reason)
+                        break  # controller is paused; end this pass
+                    futures.append(pool.submit(self._run_live, job, timeout,
+                                               instructions, runner, cancel))
+
+                return [fut.result() for fut in as_completed(futures)]
+            except BaseException:
+                cancel.set()
+                raise
 
     def _run_live(self, job: Job, timeout: float, instructions: Path,
-                  runner: Callable) -> int:
+                  runner: Callable, cancel=None) -> int:
         adapter = self.adapters[job.provider]
-        argv = adapter.build_argv(job, instructions, self.state_dir)
         status, code, output = "done", 0, ""
         try:
-            proc = runner(argv, cwd=job.worktree, timeout=timeout,
+            argv = adapter.build_argv(job, instructions, self.state_dir)
+            kwargs = dict(cwd=job.worktree, timeout=timeout,
                           capture_output=True, text=True, shell=False)
+            if runner is processes.run:
+                kwargs['cancel_event'] = cancel
+            proc = runner(argv, **kwargs)
             code = int(proc.returncode)
             output = ((proc.stdout or "")[-4000:]
                       + "\n[stderr]\n" + (proc.stderr or "")[-2000:])
             if code != 0:
                 status = "failed"
+        except (KeyboardInterrupt, SystemExit):
+            self.settle(job.id, "interrupted", None, "controller interrupted; no retry")
+            raise
         except subprocess.TimeoutExpired:
             status, code = "timed_out", None
             output = "timed out after %.0f seconds" % timeout
+        except InterruptedError:
+            status, code, output = "interrupted", None, "controller interrupted; no retry"
         except Exception as exc:
             status, code = "failed", None
             output = "launch error: %r" % exc
@@ -469,7 +509,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="per-job timeout in seconds (default 600)")
     p.add_argument("--db", default=str(DEFAULT_DB))
 
-    for name, help_ in (("list", "show jobs and pause state"),
+    for name, help_ in (("recover", "recover provably abandoned jobs and pause"),
+                        ("list", "show jobs and pause state"),
                         ("resume", "clear a pause (Jacob only)")):
         p = sub.add_parser(name, help=help_)
         p.add_argument("--db", default=str(DEFAULT_DB))
@@ -502,6 +543,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("%3d  %-9s  %-8s  %-8s  rc=%-4s %s"
                       % (job.id, job.status, job.provider, job.kind,
                          job.exit_code, (job.output or "")[:80]))
+        elif args.cmd == "recover":
+            print("recovered interrupted jobs: %s" % c.recover())
         elif args.cmd == "resume":
             c.resume()
             print("resumed")
