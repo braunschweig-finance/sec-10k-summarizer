@@ -38,55 +38,64 @@ export default function Terminal() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("ratios");
   const [slow, setSlow] = useState(false);
-  const current = useRef("");
+  const current = useRef(0);
 
   async function load(sym: string) {
     const t = sym.toUpperCase().trim();
     if (!t) return;
+    const requestId = ++current.current;
+    const isCurrent = () => current.current === requestId;
     setTicker(t);
     setLoading(true);
     setError(null);
+    setSlow(false);
     // A company's first read of its filings from SEC can take up to a minute
-    const slowTimer = setTimeout(() => setSlow(true), 5000);
-    current.current = t;
+    const slowTimer = setTimeout(() => {
+      if (isCurrent()) setSlow(true);
+    }, 5000);
     try {
       const r = await fetchReport(t);
+      if (!isCurrent()) return;
       setReport(r);
       setTab("ratios");
+      // Check again inside the updater: React may apply it after a newer load starts.
+      const update = (patch: Partial<Report>) => {
+        if (!isCurrent()) return;
+        setReport((prev) => (isCurrent() && prev ? { ...prev, ...patch } : prev));
+      };
       // The proxy statement loads after the ratios are already on screen
       if (!r.governance) {
         fetchGovernance(t)
-          .then((g) => current.current === t && setReport((prev) => (prev && prev.ticker === t ? { ...prev, governance: g } : prev)))
-          .catch((e) =>
-            current.current === t &&
-            setReport((prev) => (prev && prev.ticker === t ? { ...prev, governanceError: (e as Error).message } : prev))
-          );
+          .then((g) => update({ governance: g }))
+          .catch((e) => update({ governanceError: (e as Error).message }));
       }
-      const update = (patch: Partial<Report>) =>
-        current.current === t && setReport((prev) => (prev && prev.ticker === t ? { ...prev, ...patch } : prev));
       if (!r.payEfficiency) {
         // Trends start after Pay Efficiency, so the API reads SEC's companyfacts file once for both
         fetchPayEfficiency(t)
           .then((p) => update({ payEfficiency: p }))
           .catch((e) => update({ payEfficiencyError: (e as Error).message }))
-          .finally(() =>
-            fetchTrends(t)
+          .finally(() => {
+            if (!isCurrent()) return;
+            return fetchTrends(t)
               .then((tr) => update({ trends: tr }))
               .catch((e) => update({ trendsError: (e as Error).message }))
               // Risk factors last: the API reads one company's filings at a time, so this doesn't slow the others
-              .finally(() =>
-                fetchRisks(t)
+              .finally(() => {
+                if (!isCurrent()) return;
+                return fetchRisks(t)
                   .then((rk) => update({ risks: rk }))
                   .catch((e) => update({ risksError: (e as Error).message }))
-              )
-          );
+              });
+          });
       }
     } catch (e) {
-      setError((e as Error).message);
+      if (isCurrent()) setError((e as Error).message);
     } finally {
       clearTimeout(slowTimer);
-      setSlow(false);
-      setLoading(false);
+      if (isCurrent()) {
+        setSlow(false);
+        setLoading(false);
+      }
     }
   }
 
