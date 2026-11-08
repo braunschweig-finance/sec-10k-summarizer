@@ -64,12 +64,12 @@ Everything in this file that says "verified 2026-11-08" was checked on the owner
 - Flags relevant to dispatching:
   - `-C, --cd <DIR>` — run with the task worktree as the working root
   - `-s, --sandbox read-only|workspace-write|danger-full-access` — `workspace-write` for builders, `read-only` for reviewers; never `danger-full-access`
-  - `--approve-for-me` — route approval requests through automatic review in the workspace-write sandbox
+  - Do not combine `--approve-for-me` with `--sandbox`: CLI 0.167.0 rejects that combination. Initial trials use explicit sandbox settings without this flag.
   - `-m, --model <MODEL>` — pick a model; `-c key=value` — override any `config.toml` value
   - `--json` — print events as JSONL for the controller to parse
   - `-o, --output-last-message <FILE>` — capture the agent's final message to a file
   - `--ephemeral` — no session files on disk (not needed when the queue records the session ID)
-- Example (builder): `codex exec -C ..\sec-10k-summarizer-<task> -s workspace-write --approve-for-me --json -o result-001.jsonl "Read AGENTS.md, then implement: <task>"`
+- Example (builder): `codex exec -C ..\sec-10k-summarizer-<task> -s workspace-write --json -o result-001.txt "Read AGENTS.md, then implement: <task>"`
 - **Initial reviews use Codex read-only:** `codex exec -C ..\sec-10k-summarizer-<task> -s read-only "<review prompt>"` — reviewers never run with write access. (`codex review` / `codex exec review` give a repo-wide non-interactive pass.)
 
 ### Claude Code on personal subscription (not installed)

@@ -111,6 +111,7 @@ class ControllerTests(unittest.TestCase):
                     worktree=self.wt, status="running")
         out_dir = Path(self.tmp.name) / "out"
         argv = self.adapters["codex"].build_argv(job, Path("AGENTS.md"), out_dir)
+        self.assertNotIn("--approve-for-me", argv)
         o = argv[argv.index("-o") + 1]
         self.assertEqual(o, str(out_dir / "result-7.txt"))
         self.assertTrue(o.startswith(str(out_dir)))

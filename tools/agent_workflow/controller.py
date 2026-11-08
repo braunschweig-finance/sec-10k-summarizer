@@ -145,7 +145,7 @@ class CodexAdapter(Adapter):
         sandbox = "workspace-write" if job.kind == "builder" else "read-only"
         argv = [self._exe(), "exec", "-C", job.worktree, "-s", sandbox]
         if job.kind == "builder":
-            argv += ["--approve-for-me", "--json",
+            argv += ["--json",
                      "-o", str(Path(out_dir) / ("result-%d.txt" % job.id))]
         argv.append(_prompt(job, instructions))
         return argv
