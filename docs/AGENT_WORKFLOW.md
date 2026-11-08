@@ -28,7 +28,7 @@ Everything in this file that says "verified 2026-11-08" was checked on the owner
 - The persistent queue is the controller's **SQLite database** (`tools/agent_workflow/state.db`, local to the machine, never committed). It stays out of the public repo so internal state, session IDs, and verdicts are never published.
 - **Only the controller program writes the queue.** Workers and humans never edit it by hand; Jacob supervises through the CLI (`add`, `list`, `run`, `resume`).
 - Each job records: task, kind (builder/reviewer), provider, worktree, status, exit code, and the output tail.
-- Job statuses: `pending` → `running` → `done` | `failed` | `timed_out`. Any failure or timeout **pauses** the controller (reason stored); Jacob resumes it explicitly. No automatic retries.
+- Job statuses: `pending` → `running` → `done` | `failed` | `timed_out` | `interrupted`. Any failure or timeout **pauses** the controller (reason stored); Jacob resumes it explicitly. No automatic retries.
 - Claiming is **atomic** (SQLite `BEGIN IMMEDIATE` transaction): the pause check, the managed-cap check, the worktree-exclusivity check (no two running jobs may share a resolved worktree), and the status change all happen in the same transaction, so concurrent claims can never double-claim or exceed the cap.
 - **All live dispatch is currently disabled** (owner directive 2026-11-08, pending end-to-end validation). Any live run pauses the controller with the reason recorded and returns the job to the queue; dry-run previews never change queue state. (OpenCode additionally lacks a verified sandbox mode; the Claude Code CLI is uninstalled.)
 - State (SQLite DB) and worker output files live outside the repo, in `%LOCALAPPDATA%\sec-10k-agent-workflow`.
@@ -115,11 +115,15 @@ Everything in this file that says "verified 2026-11-08" was checked on the owner
 - **Workers never merge, never enable auto-merge, never push to `main`, never spawn subagents.**
 - The **managed-worker** cap (two jobs, ceiling four) is enforced by the controller for the jobs it dispatches; the four-worker planning number across *all* AI activity (managed + interactive) remains policy-only. Bounded subagent concurrency comes later, by explicit revision of `AGENTS.md`, not by habit.
 
-## Known limitations (unresolved — do not treat as solved)
+## Controller lifecycle (Windows fixture tests passed)
 
-- **Windows process-tree timeout.** A job timeout kills only the direct child process. If a worker CLI spawns its own children (node-based CLIs do), those can survive and keep running after the timeout.
-- **Interrupted-job recovery.** If the controller is killed while a job is `running`, the job stays `running` in the queue; clearing it is manual today. There is no automatic recovery.
-- **All live dispatch is disabled** pending end-to-end validation (owner directive 2026-11-08). The controller is dry-run only; a live run pauses with the reason recorded.
+- The default runner is Windows-only and uses a non-inheritable, kill-on-close Job Object. Each worker is created suspended, assigned to the job, then resumed. Assignment or setup failure refuses execution and terminates the exact suspended process handle. Descendants inherit containment, with no breakaway enabled. Timeout, cancellation, normal completion, and controller process death close the job handle; no process-name or broad PID kills are used. Ctrl+C cancels active default runners before executor shutdown.
+- Unsupported platforms or Windows environments that reject Job Object assignment fail closed. Fake injected runners remain available for offline unit tests; they do not provide OS containment. Abrupt death in the narrow create-suspended/before-assignment interval can leave an inert suspended process; worker code cannot execute before assignment.
+- Claims durably record the controller host, PID, and Windows process creation time in the same transaction as `running`. `recover --db <path>` checks every running owner under an exclusive write transaction. A living owner, inaccessible process, foreign host, missing identity, or unsupported identity check refuses the entire recovery pass. PID reuse is checked using creation time. Recovery never kills by stored PID.
+- Only provably abandoned jobs become terminal `interrupted`; recovery atomically pauses dispatch. There is no automatic startup recovery, retry, or requeue. Inspect results, then use `resume` explicitly; interrupted jobs remain terminal. Enqueue any replacement only after investigation.
+- Existing SQLite databases migrate additively on opening. Old rows remain intact; legacy running rows have unknown ownership and cannot be automatically recovered. Do not infer abandonment from elapsed time or edit the database to guess ownership.
+- All production adapters remain live-disabled. These lifecycle changes do not authorize live AI trials.
+- Offline checks: `python -m unittest discover -s tools/agent_workflow/tests -p "test_*.py"`. The original fake-runner checks remain; new Windows-only tests launch local Python fixtures for descendant timeout and abrupt controller death, then test explicit recovery. No AI is launched. The supervisor verified all 29 tests on native Windows, including real fixture descendants and controller termination; production AI adapters remain disabled.
 
 ## Minimal end-to-end example
 
