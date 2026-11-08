@@ -1,5 +1,9 @@
 # AGENT_WORKFLOW.md — local multi-agent development workflow
 
+## Current runtime authorization
+
+Jacob authorized live Codex and ISU OpenCode queue workers on 2026-11-08, two managed jobs at a time. Claude remains unavailable, including fallback. OpenCode runs with a private `--standalone` server so its work belongs to the managed process tree. This is process containment, not a filesystem sandbox. Codex uses workspace-write for builders and read-only for reviewers. The supervisor may complete eligible PRs after relevant checks and independent review; builders cannot self-merge. This supersedes historical draft statements below that all adapters are disabled or every merge must be performed manually by Jacob. `run --execute` starts queued jobs; dry-run remains the default. Unassigned work is not invented by workers.
+
 Companion to `AGENTS.md` (the binding rules). This file describes **how** the local setup actually runs: a local controller program, supervised by Jacob, directing up to four AI workers — OpenCode on ISU Adaptive Edge, Codex on a personal ChatGPT login, and (once installed) Claude Code on a personal subscription — in separate worktrees, coordinated through a persistent task queue, with all merging done by hand.
 
 Everything in this file that says "verified 2026-11-08" was checked on the owner's laptop that day (versions, help output, login status, reachability). Nothing here is technical enforcement: the worker cap, the queue discipline, and the merge rules are policy until code or GitHub settings make them real (see the enforcement table in `AGENTS.md`).

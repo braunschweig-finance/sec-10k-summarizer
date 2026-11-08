@@ -65,8 +65,11 @@ class LifecycleTests(unittest.TestCase):
                 self.c.recover()
         self.assertEqual(self.c.counts(), {'running': 2})
 
-    def test_production_adapters_stay_disabled(self):
-        self.assertTrue(all(not a.live_enabled for a in C.ADAPTERS.values()))
+    def test_only_authorized_providers_enabled(self):
+        self.assertTrue(C.ADAPTERS['codex'].live_enabled)
+        self.assertTrue(C.ADAPTERS['opencode'].live_enabled)
+        self.assertFalse(C.ADAPTERS['claude'].live_enabled)
+        self.assertFalse(C.ADAPTERS['claude'].available)
 
     def test_launch_and_argv_failures_settle(self):
         for build_failure in (False, True):

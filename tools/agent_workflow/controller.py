@@ -13,10 +13,9 @@ Limits, and what they do NOT claim:
   subscriptions, the deployed site's per-minute cap).
 - Dry-run is the default and is strictly read-only: it previews the
   pending jobs and their exact argv WITHOUT changing queue state.
-- **All live dispatch is currently disabled** (owner directive
-  2026-11-08, pending end-to-end validation). Every adapter has
-  live_enabled=False; a live run pauses the controller with the reason
-  recorded and returns the job to the queue.
+- Live dispatch is authorized for Codex and ISU-backed OpenCode via
+  --execute. Claude remains unavailable by the owner's explicit pause.
+  Dry-run remains the default. Disabled adapters pause and preserve jobs.
 - Pause on failure or timeout; no automatic retries; Jacob resumes.
 - State (SQLite DB) and worker output files live OUTSIDE the repository
   (default: %LOCALAPPDATA%\\sec-10k-agent-workflow).
@@ -87,8 +86,8 @@ class Adapter:
     provider = ""
     available = True           # can jobs be enqueued at all
     unavailable_reason = ""
-    live_enabled = False       # ALL live dispatch stays disabled until
-    live_disabled_reason = ""  # end-to-end validation (owner directive)
+    live_enabled = False       # providers must be explicitly authorized
+    live_disabled_reason = ""
 
     def build_argv(self, job: Job, instructions: Path, out_dir: Path) -> List[str]:
         raise NotImplementedError
@@ -105,16 +104,16 @@ def _prompt(job: Job, instructions: Path) -> str:
 
 class CodexAdapter(Adapter):
     """codex-cli 0.167.0 (verified 2026-11-08). Sandbox flags are
-    prepared in the argv (workspace-write builders, read-only reviews),
-    but live dispatch stays disabled pending end-to-end validation.
+    enforced by CLI flags (workspace-write builders, read-only reviews).
+    Live queue dispatch is authorized by the owner.
 
     Windows wrappers are resolved to the installed native binary so
     task text never passes through a command shell.
     """
     provider = "codex"
+    live_enabled = True
     live_disabled_reason = (
-        "pending end-to-end validation (owner directive 2026-11-08); "
-        "sandbox flags prepared in preview")
+        "Codex dispatch disabled by runtime policy")
 
     def __init__(self, executable: Optional[str] = None):
         self._executable = executable
@@ -141,7 +140,8 @@ class CodexAdapter(Adapter):
 
     def build_argv(self, job, instructions, out_dir):
         sandbox = "workspace-write" if job.kind == "builder" else "read-only"
-        argv = [self._exe(), "exec", "-C", job.worktree, "-s", sandbox]
+        argv = [self._exe(), "exec", "-C", job.worktree, "-s", sandbox,
+                "--ephemeral", "-c", 'model_reasoning_effort="low"']
         if job.kind == "builder":
             argv += ["--json",
                      "-o", str(Path(out_dir) / ("result-%d.txt" % job.id))]
@@ -153,16 +153,16 @@ class OpenCodeAdapter(Adapter):
     """opencode v2.2.5 (verified 2026-11-08). No verified sandbox mode:
     the help shows no read-only/workspace-write flag, and --auto
     auto-approves permissions, which is not read-only enforcement.
-    Live dispatch disabled (as with all adapters) pending end-to-end
-    validation; dry-run only."""
+    Owner-authorized dispatch uses a private standalone server contained
+    in the worker's process tree; it is not a filesystem sandbox."""
     provider = "opencode"
+    live_enabled = True
     live_disabled_reason = (
-        "no verified sandbox mode (v2.2.5 help has no read-only/"
-        "workspace-write flag; --auto is not read-only enforcement) and "
-        "live dispatch is disabled pending end-to-end validation")
+        "OpenCode dispatch disabled by runtime policy")
 
     def build_argv(self, job, instructions, out_dir):
-        return [OPENCODE_EXE, "run", "--auto", "-s", "job-%d" % job.id,
+        return [OPENCODE_EXE, "--standalone", "run", "--auto",
+                "--title", "Research worker %d" % job.id,
                 "-m", "ilstu/ilstu-coder", "--format", "json",
                 _prompt(job, instructions)]
 
@@ -171,8 +171,7 @@ class ClaudeAdapter(Adapter):
     provider = "claude"
     available = False
     unavailable_reason = (
-        "Claude Code CLI 2.1.319 is installed but not authenticated "
-        "(verified 2026-11-08); adapter stays unavailable until sign-in")
+        "Claude usage is paused by Jacob; no dispatch or fallback until explicitly re-enabled")
 
     def build_argv(self, job, instructions, out_dir):
         raise ControllerError(self.unavailable_reason)
@@ -504,7 +503,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("run",
                        help="one pass: dry-run preview (default) or live dispatch")
     p.add_argument("--execute", action="store_true",
-                   help="attempt live dispatch (all adapters currently disabled)")
+                   help="run authorized Codex/OpenCode workers; Claude stays paused")
     p.add_argument("--timeout", type=float, default=600.0,
                    help="per-job timeout in seconds (default 600)")
     p.add_argument("--db", default=str(DEFAULT_DB))

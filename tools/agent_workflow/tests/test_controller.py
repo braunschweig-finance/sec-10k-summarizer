@@ -221,6 +221,7 @@ class ControllerTests(unittest.TestCase):
     # -- live dispatch is disabled: pause + return to queue -------------------
 
     def test_live_run_pauses_on_disabled_adapter_and_returns_ids(self):
+        self.c.adapters["codex"].live_enabled = False
         self.add_job(task="x", provider="codex")
         runner = FakeRunner()
         ids = self.c.run(execute=True, runner=runner)
@@ -231,6 +232,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(runner.calls, [], "disabled adapter launches nothing")
 
     def test_opencode_dry_run_still_works_while_live_disabled(self):
+        self.c.adapters["opencode"].live_enabled = False
         self.add_job(task="x", provider="opencode")
         runner = FakeRunner()
         ids = self.c.run(execute=False, runner=runner)
@@ -304,7 +306,7 @@ class ControllerTests(unittest.TestCase):
     def test_claude_unavailable_until_installed(self):
         with self.assertRaises(C.ControllerError) as ctx:
             self.c.add("x", "builder", "claude", self.wt)
-            self.assertIn("not authenticated", str(ctx.exception))
+        self.assertIn("paused", str(ctx.exception))
 
     def test_live_uses_list_argv_no_shell(self):
         self.add_job(task="x")

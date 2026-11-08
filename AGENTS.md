@@ -1,8 +1,10 @@
 # AGENTS.md — Rules for AI contributors in this repository
 
-Read this before doing any work here. These are instructions for AI contributors to this repository (OpenCode, Claude Code, Codex, or any other agent). Full project background lives outside the repo at `C:\Users\Jacob\OneDrive\Claude AI\Finance Research CLAUDE.md` (on the owner's laptop) — read it if you have access.
+Read this before doing any work here. These are instructions for AI contributors to this repository (OpenCode, Claude Code, Codex, or any other agent). Optional background is at `C:\Users\Jacob\OneDrive\Claude AI\Finance Research CLAUDE.md`. To conserve tokens, do not load that entire historical log by default; read only relevant excerpts when the assigned task needs them.
 
 Temporary provider policy: Claude Code usage is paused at Jacob's request because his weekly allowance is nearly exhausted. Do not dispatch Claude, use it as fallback, or resume it without Jacob explicitly re-enabling it. Use Codex and ISU-backed OpenCode only for development trials. This does not change the deployed website's provider settings.
+
+Jacob has authorized live Codex and ISU OpenCode queue workers, initially two concurrently in separate worktrees. He also authorizes the supervising agent to complete eligible PRs after relevant checks and independent review pass. Builders never merge their own work. This supersedes older draft notes requiring Jacob to merge every PR or saying all adapters are disabled. No nested subagents or Claude fallback. Current worker tasks exclude financial formula, credential, and production configuration changes.
 
 ## Project purpose
 
