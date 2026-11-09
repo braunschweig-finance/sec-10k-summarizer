@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import ScreenerDataNotes from "./ScreenerDataNotes";
+import ScreenerComparison from "./ScreenerComparison";
+import {canCompare, MAX_COMPARISON_COMPANIES, sameSelectionSnapshot, toggleSelection} from "@/lib/screenerSelection";
 import { dataAgeDays, fieldReasons } from "@/lib/screenerContext";
 import { API_URL } from "@/lib/api";
 import { DEFAULT_SCREENER_STATE, parseScreenerUrl, serializeScreenerUrl, type ScreenerUrlState } from "@/lib/screenerUrl";
@@ -63,6 +65,33 @@ export default function Screener() {
   const [manualUrl, setManualUrl] = useState("");
   const manualInput = useRef<HTMLInputElement>(null);
   const copyId = useRef(0);
+  const [selection, setSelection] = useState<{builtAt:string|null; source:ScreenerData; rows:ScreenerRow[]} | null>(null);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [selectionMessage, setSelectionMessage] = useState("");
+  const compareButton = useRef<HTMLButtonElement>(null);
+  const selectedRows = selection && data && sameSelectionSnapshot(selection,data) ? selection.rows : [];
+  const selectionReady = !loading && !error && !!data?.available && searchText.trim().slice(0,100) === search;
+
+  useEffect(() => {
+    if (selection && data && !sameSelectionSnapshot(selection,data)) {
+      setSelection(null);
+      setComparisonOpen(false);
+      setSelectionMessage("The snapshot changed or its build date could not be verified. Select companies again so the comparison uses one snapshot.");
+    }
+  }, [data, selection]);
+
+  useEffect(()=>{if (!selectionReady) setComparisonOpen(false);},[selectionReady]);
+
+  const selectRow = (row:ScreenerRow) => {
+    if (!selectionReady || !data) return;
+    if (selectedRows.length <= 2 && selectedRows.some(item=>item.ticker===row.ticker)) setComparisonOpen(false);
+    setSelectionMessage("");
+    setSelection(previous => ({builtAt:data.built_at,source:data, rows:toggleSelection(previous && sameSelectionSnapshot(previous,data) ? previous.rows : [],row)}));
+  };
+  const removeSelected = (ticker:string) => {
+    if (selectedRows.length <= 2) setComparisonOpen(false);
+    setSelection(previous => previous ? {...previous,rows:previous.rows.filter(row=>row.ticker!==ticker)} : null);
+  };
 
   const cancelSearch = () => {
     if (searchTimer.current !== null) clearTimeout(searchTimer.current);
@@ -356,6 +385,19 @@ export default function Screener() {
               </div>
             </form>
 
+            <p role="status" className="text-sm text-muted">{selectionMessage}</p>
+            {selectedRows.length > 0 && (
+              <section aria-label="Comparison selection" className="min-w-0 rounded-xl border border-brass/40 bg-panel p-4">
+                <p className="text-sm">{selectedRows.length} of {MAX_COMPARISON_COMPANIES} companies selected. Select 2–4 to compare. Selections stay across filters and pages within a dated snapshot; undated results reset when refreshed. Reloading or leaving this page clears selections. Updating results closes the comparison.</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {selectedRows.map(row=><button key={row.ticker} type="button" aria-label={`Remove ${row.ticker} from comparison`} onClick={()=>removeSelected(row.ticker)} className={button}>{row.ticker} ×</button>)}
+                  <button ref={compareButton} type="button" disabled={!selectionReady || !canCompare(selectedRows)} onClick={()=>{if(selectionReady) setComparisonOpen(true);}} className={button}>Compare selected</button>
+                  <button type="button" onClick={()=>{setSelection(null);setComparisonOpen(false);}} className={button}>Clear selected</button>
+                </div>
+              </section>
+            )}
+            {comparisonOpen && selectionReady && canCompare(selectedRows) && <ScreenerComparison rows={selectedRows} builtAt={selection?.builtAt??null} onClose={()=>{setComparisonOpen(false);compareButton.current?.focus();}}/>}
+
             <p role="status" className="text-sm text-muted">
               {loading
                 ? "Reading the cached snapshot…"
@@ -463,6 +505,7 @@ export default function Screener() {
                   <table className="w-full min-w-[1020px] text-sm [overflow-wrap:normal]">
                     <thead className="bg-panel text-muted">
                       <tr>
+                        <th scope="col" className="px-3 py-2.5 text-left">Compare</th>
                         <SortTh label="Company" k="ticker" sort={sort} order={order} onSort={onSortClick} />
                         <SortTh label="Name" k="name" sort={sort} order={order} onSort={onSortClick} />
                         <SortTh label="Sector" k="sector" sort={sort} order={order} onSort={onSortClick} />
@@ -483,6 +526,14 @@ export default function Screener() {
                     <tbody>
                       {data.rows.map((r) => (
                         <tr key={r.ticker} className="border-t border-line hover:bg-panel/70">
+                          <td className="px-3 py-2">
+                            <label className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center">
+                              <input type="checkbox" aria-label={`Select ${r.ticker} for comparison`}
+                                checked={selectedRows.some(row=>row.ticker===r.ticker)}
+                                disabled={!selectionReady || (selectedRows.length>=MAX_COMPARISON_COMPANIES && !selectedRows.some(row=>row.ticker===r.ticker))}
+                                onChange={()=>selectRow(r)} className="h-5 w-5 accent-brass"/>
+                            </label>
+                          </td>
                           <td className="px-3 py-2">
                             <a
                               href={`/?ticker=${encodeURIComponent(r.ticker)}`}
