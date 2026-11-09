@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/api";
+import { DEFAULT_SCREENER_STATE, parseScreenerUrl, serializeScreenerUrl, type ScreenerUrlState } from "@/lib/screenerUrl";
 import {
   PAGE_SIZES,
   SCREENER_GRADES,
@@ -25,6 +26,15 @@ const GRADE_STYLE: Record<string, string> = {
 
 const fmtInt = (n: number) => n.toLocaleString("en-US");
 
+const URL_KEYS = ["search", "sector", "grade", "max_pay_efficiency_pct", "min_upside_pct", "sort", "order", "limit", "offset"];
+
+function screenUrl(state: ScreenerUrlState): URL {
+  const url = new URL(window.location.href);
+  URL_KEYS.forEach((key) => url.searchParams.delete(key));
+  new URLSearchParams(serializeScreenerUrl(state)).forEach((value, key) => url.searchParams.set(key, value));
+  return url;
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "unknown date";
   const d = new Date(iso);
@@ -40,7 +50,7 @@ export default function Screener() {
   const [grade, setGrade] = useState("");
   const [maxPay, setMaxPay] = useState("");
   const [minUpside, setMinUpside] = useState("");
-  const [sort, setSort] = useState<ScreenerQuery["sort"]>("ticker");
+  const [sort, setSort] = useState<ScreenerUrlState["sort"]>("ticker");
   const [order, setOrder] = useState<"asc" | "desc">("asc");
   const [limit, setLimit] = useState(50);
   const [offset, setOffset] = useState(0);
@@ -50,28 +60,96 @@ export default function Screener() {
   const [error, setError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const requestId = useRef(0);
+  const [initialized, setInitialized] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copyMessage, setCopyMessage] = useState("");
+  const [manualUrl, setManualUrl] = useState("");
+  const manualInput = useRef<HTMLInputElement>(null);
+  const copyId = useRef(0);
 
-  // Debounce the search box so typing doesn't fire a request per keystroke.
+  const cancelSearch = () => {
+    if (searchTimer.current !== null) clearTimeout(searchTimer.current);
+    searchTimer.current = null;
+  };
+  const restoreState = (state: ScreenerUrlState) => {
+    cancelSearch();
+    ++copyId.current;
+    setSearchText(state.search);
+    setSearch(state.search);
+    setSector(state.sector);
+    setGrade(state.grade);
+    setMaxPay(state.maxPay);
+    setMinUpside(state.minUpside);
+    setSort(state.sort);
+    setOrder(state.order);
+    setLimit(state.limit);
+    setOffset(state.offset);
+    setCopyMessage("");
+    setManualUrl("");
+  };
+
+  // Read browser state only after mounting; the first request must use these filters.
   useEffect(() => {
-    const t = setTimeout(() => setSearch(searchText.trim()), 350);
-    return () => clearTimeout(t);
-  }, [searchText]);
+    const restore = () => {
+      restoreState(parseScreenerUrl(window.location.search));
+      setInitialized(true);
+    };
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => {
+      cancelSearch();
+      ++requestId.current;
+      ++copyId.current;
+      window.removeEventListener("popstate", restore);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!initialized) return;
+    ++copyId.current;
+    const url = screenUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset });
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
+    setCopyMessage("");
+    setManualUrl("");
+  }, [initialized, search, sector, grade, maxPay, minUpside, sort, order, limit, offset]);
+
+  useEffect(() => {
+    if (manualUrl) {
+      manualInput.current?.focus();
+      manualInput.current?.select();
+    }
+  }, [manualUrl]);
+
+  const copyScreenLink = async () => {
+    const id = ++copyId.current;
+    const url = screenUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset }).href;
+    setCopyMessage("");
+    setManualUrl("");
+    try {
+      await navigator.clipboard.writeText(url);
+      if (id !== copyId.current) return;
+      setCopyMessage("Screen link copied.");
+    } catch {
+      if (id !== copyId.current) return;
+      setCopyMessage("Could not copy the screen link. Select and copy the URL below manually.");
+      setManualUrl(url);
+    }
+  };
 
   // Every filter, sort, order, page-size or page change is one snapshot request.
   // A request id guards the response: a stale response can never overwrite a newer filter set.
   useEffect(() => {
-    if (!API_URL) return;
+    if (!initialized || !API_URL) return;
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
-    const q: ScreenerQuery = { sort, order, limit, offset };
-    if (search) q.search = search;
-    if (sector) q.sector = sector;
-    if (grade) q.grade = grade as ScreenerQuery["grade"];
-    const mp = parseFloat(maxPay);
-    if (Number.isFinite(mp)) q.max_pay_efficiency_pct = mp;
-    const mu = parseFloat(minUpside);
-    if (Number.isFinite(mu)) q.min_upside_pct = mu;
+    const normalized = parseScreenerUrl(serializeScreenerUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset }));
+    const q: ScreenerQuery = { sort: normalized.sort, order: normalized.order, limit: normalized.limit, offset: normalized.offset };
+    if (normalized.search) q.search = normalized.search;
+    if (normalized.sector) q.sector = normalized.sector;
+    if (normalized.grade) q.grade = normalized.grade as ScreenerQuery["grade"];
+    if (normalized.maxPay !== "") q.max_pay_efficiency_pct = Number(normalized.maxPay);
+    if (normalized.minUpside !== "") q.min_upside_pct = Number(normalized.minUpside);
     fetchScreener(q)
       .then((d) => {
         if (requestId.current !== id) return;
@@ -83,11 +161,12 @@ export default function Screener() {
         setError((e as Error).message);
         setLoading(false);
       });
-  }, [API_URL, search, sector, grade, maxPay, minUpside, sort, order, limit, offset, retryTick]);
+    return () => { ++requestId.current; };
+  }, [initialized, API_URL, search, sector, grade, maxPay, minUpside, sort, order, limit, offset, retryTick]);
 
   // Changing any filter (or the page size) goes back to the first page.
   const resetPage = () => setOffset(0);
-  const onSortClick = (key: ScreenerQuery["sort"]) => {
+  const onSortClick = (key: ScreenerUrlState["sort"]) => {
     if (key === sort) setOrder((o) => (o === "asc" ? "desc" : "asc"));
     else {
       setSort(key);
@@ -96,15 +175,7 @@ export default function Screener() {
     resetPage();
   };
   const resetAll = () => {
-    setSearchText("");
-    setSearch("");
-    setSector("");
-    setGrade("");
-    setMaxPay("");
-    setMinUpside("");
-    setSort("ticker");
-    setOrder("asc");
-    setOffset(0);
+    restoreState(DEFAULT_SCREENER_STATE);
   };
 
   const matched = data?.matched ?? 0;
@@ -160,9 +231,19 @@ export default function Screener() {
                   id="sc-search"
                   value={searchText}
                   onChange={(e) => {
-                    setSearchText(e.target.value);
-                    resetPage();
+                    const value = e.target.value;
+                    ++copyId.current;
+                    setCopyMessage("");
+                    setManualUrl("");
+                    setSearchText(value);
+                    cancelSearch();
+                    searchTimer.current = setTimeout(() => {
+                      searchTimer.current = null;
+                      setSearch(value.trim().slice(0, 100));
+                      setOffset(0);
+                    }, 350);
                   }}
+                  maxLength={100}
                   placeholder="e.g. CAT or Caterpillar"
                   autoComplete="off"
                   className={field}
@@ -182,6 +263,7 @@ export default function Screener() {
                   className={selectField}
                 >
                   <option value="">All sectors</option>
+                  {sector && !data?.sectors.includes(sector) && <option value={sector}>{sector}</option>}
                   {(data?.sectors ?? []).map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -246,10 +328,33 @@ export default function Screener() {
                   className={field}
                 />
               </div>
-              <div className="flex items-end min-[400px]:col-span-2 sm:col-span-3 lg:col-span-6">
+              <div className="flex flex-wrap items-end gap-3 min-[400px]:col-span-2 sm:col-span-3 lg:col-span-6">
                 <button type="button" onClick={resetAll} className={button}>
                   Reset all filters
                 </button>
+                <button
+                  type="button"
+                  onClick={copyScreenLink}
+                  disabled={!initialized || searchText.trim().slice(0, 100) !== search}
+                  className={button}
+                >
+                  Copy screen link
+                </button>
+                <p role="status" aria-live="polite" className="w-full text-sm text-muted">{copyMessage}</p>
+                {manualUrl && (
+                  <div className="flex w-full min-w-0 flex-col gap-1">
+                    <label htmlFor="sc-manual-url" className="text-sm text-muted">Screen link for manual copying</label>
+                    <input
+                      ref={manualInput}
+                      id="sc-manual-url"
+                      type="text"
+                      readOnly
+                      value={manualUrl}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className={field}
+                    />
+                  </div>
+                )}
               </div>
             </form>
 
@@ -573,10 +678,10 @@ function SortTh({
   align = "text-left",
 }: {
   label: string;
-  k: ScreenerQuery["sort"];
-  sort: ScreenerQuery["sort"];
+  k: ScreenerUrlState["sort"];
+  sort: ScreenerUrlState["sort"];
   order: "asc" | "desc";
-  onSort: (k: ScreenerQuery["sort"]) => void;
+  onSort: (k: ScreenerUrlState["sort"]) => void;
   align?: string;
 }) {
   const active = sort === k;
