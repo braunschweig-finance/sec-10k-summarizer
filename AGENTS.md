@@ -4,7 +4,7 @@ Read this before doing any work here. These are instructions for AI contributors
 
 Temporary provider policy: Claude Code usage is paused at Jacob's request because his weekly allowance is nearly exhausted. Do not dispatch Claude, use it as fallback, or resume it without Jacob explicitly re-enabling it. Use Codex and ISU-backed OpenCode only for development trials. This does not change the deployed website's provider settings.
 
-Jacob has authorized live Codex and ISU OpenCode queue workers, initially two concurrently in separate worktrees. He also authorizes the supervising agent to complete eligible PRs after relevant checks and independent review pass. Builders never merge their own work. This supersedes older draft notes requiring Jacob to merge every PR or saying all adapters are disabled. No nested subagents or Claude fallback. Current worker tasks exclude financial formula, credential, and production configuration changes.
+Jacob has authorized four concurrent live Codex/ISU OpenCode queue workers in separate worktrees (hard ceiling four), superseding the earlier two-slot split. He also authorizes the supervising agent to complete eligible PRs after relevant checks and independent review pass. Builders never merge their own work. This supersedes older draft notes requiring Jacob to merge every PR or saying all adapters are disabled. No nested subagents or Claude fallback. Current worker tasks exclude financial formula, credential, and production configuration changes.
 
 ## Project purpose
 

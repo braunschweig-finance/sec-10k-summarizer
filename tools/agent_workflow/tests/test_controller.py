@@ -55,7 +55,7 @@ class ControllerTests(unittest.TestCase):
             "opencode": C.OpenCodeAdapter(),
             "claude": C.ClaudeAdapter(),
         }
-        self.c = C.Controller(Path(self.tmp.name) / "state.db", adapters=self.adapters)
+        self.c = C.Controller(Path(self.tmp.name) / "state.db", max_jobs=2, adapters=self.adapters)
         self.wt = str(Path(self.tmp.name) / "wt")
         os.makedirs(self.wt, exist_ok=True)
 
@@ -151,6 +151,26 @@ class ControllerTests(unittest.TestCase):
             db.execute("UPDATE jobs SET status='done' WHERE id=?", (j1,))
         self.assertEqual(self.c.claim(), j2,
                          "shared worktree becomes claimable once it is free")
+
+    def test_authorized_default_claims_four_but_not_five(self):
+        c = C.Controller(Path(self.tmp.name) / 'four.db', adapters=self.adapters)
+        self.assertEqual(c.max_jobs, 4)
+        for i in range(5):
+            c.add(str(i), 'builder', 'fake', self.new_wt('four-%d' % i))
+        results = []
+        lock = threading.Lock()
+        def attempt():
+            result = c.claim()
+            with lock:
+                results.append(result)
+        threads = [threading.Thread(target=attempt) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(len([r for r in results if r is not None]), 4)
+        self.assertEqual(c.counts(), {'running': 4, 'pending': 1})
 
     def test_concurrent_claims_respect_cap(self):
         for i in range(6):
