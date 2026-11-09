@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ScreenerDataNotes from "./ScreenerDataNotes";
+import { dataAgeDays, fieldReasons } from "@/lib/screenerContext";
 import { API_URL } from "@/lib/api";
 import { DEFAULT_SCREENER_STATE, parseScreenerUrl, serializeScreenerUrl, type ScreenerUrlState } from "@/lib/screenerUrl";
 import {
@@ -35,12 +37,6 @@ function screenUrl(state: ScreenerUrlState): URL {
   return url;
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "unknown date";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-}
-
 const na = (reason: string | undefined) => <span className="text-muted" title={reason || undefined}>N/A</span>;
 
 export default function Screener() {
@@ -60,6 +56,7 @@ export default function Screener() {
   const [error, setError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const requestId = useRef(0);
+  const [clientNow, setClientNow] = useState<number | null>(null);
   const [initialized, setInitialized] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copyMessage, setCopyMessage] = useState("");
@@ -90,6 +87,8 @@ export default function Screener() {
 
   // Read browser state only after mounting; the first request must use these filters.
   useEffect(() => {
+    setClientNow(Date.now());
+    const clock = window.setInterval(() => setClientNow(Date.now()), 60_000);
     const restore = () => {
       restoreState(parseScreenerUrl(window.location.search));
       setInitialized(true);
@@ -97,6 +96,7 @@ export default function Screener() {
     restore();
     window.addEventListener("popstate", restore);
     return () => {
+      window.clearInterval(clock);
       cancelSearch();
       ++requestId.current;
       ++copyId.current;
@@ -184,11 +184,9 @@ export default function Screener() {
   const pages = Math.max(1, Math.ceil(matched / limit));
   const page = Math.floor(offset / limit) + 1;
   const lowCount = data ? data.rows.filter((r) => r.valuation_confidence === "low").length : 0;
-  const missingNote = (r: ScreenerRow) => (r.missing.length ? r.missing.join(" · ") : undefined);
-  const caveats = (r: ScreenerRow, prefix: string) => r.missing
-    .filter((reason) => reason.startsWith(prefix))
-    .map((reason) => reason.replace(/^[^:]+:\s*/, ""))
-    .join(" · ");
+  const snapshotAge = clientNow === null ? null : dataAgeDays(data?.built_at ?? null, clientNow);
+  const caveats = (r: ScreenerRow, field: string) => fieldReasons(r.missing, field).join(" · ");
+  const missingNote = (r: ScreenerRow, field: string) => caveats(r, field) || "No value in the snapshot; no field-specific reason supplied.";
 
   const field = "min-h-11 min-w-0 w-full rounded-xl border border-line bg-ink px-3 py-2 text-base sm:text-sm outline-none focus:border-brass";
   const selectField =
@@ -417,6 +415,19 @@ export default function Screener() {
               </div>
             )}
 
+            {!error && data?.available && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted">
+                  <span>
+                    Snapshot built <span className="text-paper">{data.built_at ?? "Unavailable"}</span> · {snapshotAge === null ? "Age unavailable" : `Age ${snapshotAge} day${snapshotAge === 1 ? "" : "s"}`}
+                  </span>
+                  <span>
+                    Coverage of {fmtInt(data.total)}: Pay Efficiency {fmtInt(data.coverage.pay_efficiency_pct)} · Company Grade{" "}
+                    {fmtInt(data.coverage.grade)} · peer upside {fmtInt(data.coverage.upside_pct)}
+                  </span>
+                  <span>Coverage counts companies with a value, not the completeness of any individual grade. Prices are cached; each row shows its price date. Rebuilding the snapshot does not update quotes.</span>
+                </div>
+            )}
+
             {!error && data && data.available && data.rows.length === 0 && !loading && (
               <div className="flex flex-col gap-3 rounded-2xl border border-line bg-panel p-6">
                 <h2 className="text-lg font-bold">No match</h2>
@@ -429,17 +440,6 @@ export default function Screener() {
 
             {!error && data && data.available && data.rows.length > 0 && (
               <div className="flex min-w-0 max-w-full flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted">
-                  <span>
-                    Snapshot built <span className="text-paper">{fmtDate(data.built_at)}</span>
-                  </span>
-                  <span>
-                    Coverage of {fmtInt(data.total)}: Pay Efficiency {fmtInt(data.coverage.pay_efficiency_pct)} · Company Grade{" "}
-                    {fmtInt(data.coverage.grade)} · peer upside {fmtInt(data.coverage.upside_pct)}
-                  </span>
-                  <span>Prices are cached; each row shows its price date</span>
-                </div>
-
                 {data.warnings.length > 0 && (
                   <div className="flex flex-col gap-1 rounded-xl border border-brass/30 bg-brass/10 px-4 py-3 text-sm text-brass">
                     {data.warnings.map((w) => (
@@ -467,7 +467,7 @@ export default function Screener() {
                         <SortTh label="Name" k="name" sort={sort} order={order} onSort={onSortClick} />
                         <SortTh label="Sector" k="sector" sort={sort} order={order} onSort={onSortClick} />
                         <th scope="col" className="px-3 py-2.5 text-left font-medium">
-                          FY end
+                          Fiscal year end
                         </th>
                         <SortTh label="Pay Efficiency %" k="pay_efficiency_pct" sort={sort} order={order} onSort={onSortClick} align="text-right" />
                         <SortTh label="Company Grade" k="grade_score" sort={sort} order={order} onSort={onSortClick} align="text-right" />
@@ -497,19 +497,19 @@ export default function Screener() {
                           <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted">{r.fy_end ?? "—"}</td>
                           <td
                             className="tnum px-3 py-2 text-right font-mono"
-                            title={r.pay_efficiency_pct === null ? missingNote(r) : "CEO pay actually paid ÷ operating income; stays signed, so a negative value is not better efficiency"}
+                            title={r.pay_efficiency_pct === null ? missingNote(r, "pay_efficiency_pct") : "CEO pay actually paid ÷ operating income; stays signed, so a negative value is not better efficiency"}
                           >
                             {r.pay_efficiency_pct === null ? (
-                              na(missingNote(r))
+                              na(missingNote(r, "pay_efficiency_pct"))
                             ) : (
                               <span className={`whitespace-nowrap ${r.pay_efficiency_pct < 0 ? "text-muted" : ""}`}>
                                 {r.pay_efficiency_pct.toFixed(2)}%
                               </span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right" title={r.grade === null ? missingNote(r) : caveats(r, "grade.") || undefined}>
+                          <td className="px-3 py-2 text-right" title={r.grade === null ? missingNote(r, "grade") : caveats(r, "grade") || undefined}>
                             {r.grade === null ? (
-                              na(missingNote(r))
+                              na(missingNote(r, "grade"))
                             ) : (
                               <span className="inline-flex items-center gap-1.5">
                                 <span
@@ -522,30 +522,30 @@ export default function Screener() {
                                 )}
                               </span>
                             )}
-                            {r.grade !== null && caveats(r, "grade.") && (
-                              <p className="mt-1 max-w-64 text-left text-xs leading-relaxed text-muted">{caveats(r, "grade.")}</p>
+                            {r.grade !== null && caveats(r, "grade") && (
+                              <p className="mt-1 max-w-64 text-left text-xs leading-relaxed text-muted">{caveats(r, "grade")}</p>
                             )}
                           </td>
                           <td
                             className="tnum px-3 py-2 text-right font-mono"
                             title={
                               r.upside_pct === null
-                                ? missingNote(r)
+                                ? missingNote(r, "upside_pct")
                                 : r.sources.valuation_source
                                   ? `Source: ${r.sources.valuation_source}`
                                   : "Peer-valuation upside vs the cached price"
                             }
                           >
                             {r.upside_pct === null ? (
-                              na(missingNote(r))
+                              na(missingNote(r, "upside_pct"))
                             ) : (
                               <span className={`whitespace-nowrap ${r.upside_pct >= 0 ? "text-teal" : "text-rose"}`}>
                                 {r.upside_pct >= 0 ? "+" : ""}
                                 {r.upside_pct.toFixed(1)}%
                               </span>
                             )}
-                            {r.upside_pct !== null && caveats(r, "upside_pct:") && (
-                              <p className="mt-1 max-w-64 text-left text-xs leading-relaxed text-muted">{caveats(r, "upside_pct:")}</p>
+                            {r.upside_pct !== null && caveats(r, "upside_pct") && (
+                              <p className="mt-1 max-w-64 text-left text-xs leading-relaxed text-muted">{caveats(r, "upside_pct")}</p>
                             )}
                             {r.valuation_confidence === "low" && (
                               <span
@@ -590,6 +590,7 @@ export default function Screener() {
                                 </span>
                               )}
                             </span>
+                            <ScreenerDataNotes row={r} />
                           </td>
                         </tr>
                       ))}
@@ -645,7 +646,7 @@ export default function Screener() {
                     peer-valuation estimate. No live SEC, price or AI calls are made while screening.
                   </p>
                   <p>
-                    N/A means the snapshot has no value for that field — hover a cell for the reason. Pay Efficiency stays signed: a
+                    N/A means the snapshot has no value for that field; an absent value is not zero. Open each company’s Data notes beside Sources for field-specific reasons. Pay Efficiency stays signed: a
                     negative value can reflect negative compensation actually paid; it does not mean better efficiency.
                     {lowCount > 0 && ` ${lowCount} row${lowCount > 1 ? "s" : ""} on this page carry a low-confidence valuation tag, which is not a reliable investment signal.`}
                   </p>
