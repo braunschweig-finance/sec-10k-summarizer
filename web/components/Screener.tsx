@@ -119,14 +119,14 @@ export default function Screener() {
     .map((reason) => reason.replace(/^[^:]+:\s*/, ""))
     .join(" · ");
 
-  const field = "w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm outline-none focus:border-brass";
+  const field = "min-h-11 min-w-0 w-full rounded-xl border border-line bg-ink px-3 py-2 text-base sm:text-sm outline-none focus:border-brass";
   const selectField =
-    "rounded-xl border border-line bg-ink px-2.5 py-2 text-sm text-paper outline-none focus:border-brass";
-  const button = "rounded-xl border border-line px-3.5 py-2 text-sm transition-colors hover:border-brass disabled:opacity-40 disabled:hover:border-line";
+    "min-h-11 min-w-0 max-w-full rounded-xl border border-line bg-ink px-2.5 py-2 text-base sm:text-sm text-paper outline-none focus:border-brass";
+  const button = "min-h-11 rounded-xl border border-line px-3.5 py-2 text-sm transition-colors hover:border-brass focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brass disabled:opacity-40 disabled:hover:border-line";
 
   return (
-    <main className="min-h-screen">
-      <section className="gutter mx-auto flex max-w-6xl flex-col gap-6 py-12">
+    <main className="min-h-screen min-w-0">
+      <section className="gutter mx-auto flex min-w-0 w-full max-w-6xl flex-col gap-6 py-12 [overflow-wrap:anywhere]">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-col gap-2">
             <span className="eyebrow">Company screener · cached snapshot</span>
@@ -149,10 +149,10 @@ export default function Screener() {
         ) : (
           <>
             <form
-              className="grid grid-cols-2 gap-3 rounded-2xl border border-line bg-panel p-4 sm:grid-cols-3 lg:grid-cols-6"
+              className="grid min-w-0 grid-cols-1 gap-3 rounded-2xl border border-line bg-panel p-4 min-[400px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
               onSubmit={(e) => e.preventDefault()}
             >
-              <div className="col-span-2 flex flex-col gap-1 sm:col-span-3 lg:col-span-2">
+              <div className="min-w-0 flex flex-col gap-1 min-[400px]:col-span-2 sm:col-span-3 lg:col-span-2">
                 <label htmlFor="sc-search" className="eyebrow">
                   Search ticker or name
                 </label>
@@ -246,7 +246,7 @@ export default function Screener() {
                   className={field}
                 />
               </div>
-              <div className="col-span-2 flex items-end sm:col-span-3 lg:col-span-6">
+              <div className="flex items-end min-[400px]:col-span-2 sm:col-span-3 lg:col-span-6">
                 <button type="button" onClick={resetAll} className={button}>
                   Reset all filters
                 </button>
@@ -323,7 +323,7 @@ export default function Screener() {
             )}
 
             {!error && data && data.available && data.rows.length > 0 && (
-              <div className="flex flex-col gap-3">
+              <div className="flex min-w-0 max-w-full flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted">
                   <span>
                     Snapshot built <span className="text-paper">{fmtDate(data.built_at)}</span>
@@ -343,8 +343,19 @@ export default function Screener() {
                   </div>
                 )}
 
-                <div className="overflow-x-auto rounded-2xl border border-line" aria-busy={loading}>
-                  <table className="w-full min-w-[1020px] text-sm">
+                <p id="screener-scroll-help" className="text-xs leading-relaxed text-muted">
+                  <span className="lg:hidden">Swipe horizontally to see all columns. </span>
+                  Keyboard: focus the table area and use the left and right arrow keys to scroll.
+                </p>
+                <div
+                  className="min-w-0 max-w-full overflow-x-auto rounded-2xl border border-line focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brass"
+                  role="region"
+                  aria-label="Company screener results"
+                  aria-describedby="screener-scroll-help"
+                  tabIndex={0}
+                  aria-busy={loading}
+                >
+                  <table className="w-full min-w-[1020px] text-sm [overflow-wrap:normal]">
                     <thead className="bg-panel text-muted">
                       <tr>
                         <SortTh label="Company" k="ticker" sort={sort} order={order} onSort={onSortClick} />
@@ -378,7 +389,7 @@ export default function Screener() {
                           </td>
                           <td className="px-3 py-2">{r.name}</td>
                           <td className="px-3 py-2 text-muted">{r.sector ?? "—"}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-muted">{r.fy_end ?? "—"}</td>
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted">{r.fy_end ?? "—"}</td>
                           <td
                             className="tnum px-3 py-2 text-right font-mono"
                             title={r.pay_efficiency_pct === null ? missingNote(r) : "CEO pay actually paid ÷ operating income; stays signed, so a negative value is not better efficiency"}
@@ -386,7 +397,7 @@ export default function Screener() {
                             {r.pay_efficiency_pct === null ? (
                               na(missingNote(r))
                             ) : (
-                              <span className={r.pay_efficiency_pct < 0 ? "text-muted" : undefined}>
+                              <span className={`whitespace-nowrap ${r.pay_efficiency_pct < 0 ? "text-muted" : ""}`}>
                                 {r.pay_efficiency_pct.toFixed(2)}%
                               </span>
                             )}
@@ -423,7 +434,7 @@ export default function Screener() {
                             {r.upside_pct === null ? (
                               na(missingNote(r))
                             ) : (
-                              <span className={r.upside_pct >= 0 ? "text-teal" : "text-rose"}>
+                              <span className={`whitespace-nowrap ${r.upside_pct >= 0 ? "text-teal" : "text-rose"}`}>
                                 {r.upside_pct >= 0 ? "+" : ""}
                                 {r.upside_pct.toFixed(1)}%
                               </span>
@@ -441,7 +452,7 @@ export default function Screener() {
                             )}
                           </td>
                           <td
-                            className="px-3 py-2 font-mono text-xs text-muted"
+                            className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted"
                             title={r.price_date ? `Cached close on ${r.price_date}` : "No cached price in the snapshot"}
                           >
                             {r.price_date ?? "—"}
@@ -485,7 +496,7 @@ export default function Screener() {
                   <span className="text-muted">
                     Showing {first}–{last} of {fmtInt(matched)} matched · {fmtInt(data.total)} in snapshot
                   </span>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 w-full flex-wrap items-center gap-2 sm:w-auto">
                     <label htmlFor="sc-size" className="text-muted">
                       Rows per page
                     </label>
@@ -507,7 +518,7 @@ export default function Screener() {
                     <button type="button" className={button} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>
                       ← Prev
                     </button>
-                    <span className="font-mono text-xs text-muted">
+                    <span className="whitespace-nowrap font-mono text-xs text-muted">
                       page {page} of {pages}
                     </span>
                     <button
@@ -540,7 +551,7 @@ export default function Screener() {
         )}
       </section>
 
-      <footer className="gutter mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-line py-8 text-sm text-muted">
+      <footer className="gutter mx-auto flex min-w-0 w-full max-w-6xl flex-wrap justify-between gap-4 border-t border-line py-8 text-sm text-muted [overflow-wrap:anywhere]">
         <span>
           <a href="/" className="hover:text-paper">
             ← Back to the terminal
@@ -575,7 +586,7 @@ function SortTh({
       aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"}
       className={`px-3 py-2.5 font-medium ${align}`}
     >
-      <button type="button" onClick={() => onSort(k)} className={`inline-flex items-center gap-1 hover:text-paper ${active ? "text-paper" : ""}`}>
+      <button type="button" onClick={() => onSort(k)} className={`inline-flex min-h-11 items-center gap-1 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brass hover:text-paper ${active ? "text-paper" : ""}`}>
         {label}
         <span aria-hidden className="text-[10px]">
           {active ? (order === "asc" ? "▲" : "▼") : "↕"}
