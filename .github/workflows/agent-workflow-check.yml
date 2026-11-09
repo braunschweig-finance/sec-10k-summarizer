@@ -1,0 +1,27 @@
+name: Agent controller checks
+
+on:
+  pull_request:
+    paths:
+      - "tools/agent_workflow/**"
+      - ".github/workflows/agent-workflow-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-controller:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Offline controller regressions (no AI calls)
+        run: python -m unittest discover -s tools/agent_workflow/tests -v

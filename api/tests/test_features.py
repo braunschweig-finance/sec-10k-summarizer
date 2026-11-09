@@ -237,6 +237,8 @@ def test_csv_missing_values():
 def test_api_routes(fake_sec, monkeypatch):
     from fastapi.testclient import TestClient
     import main
+    # Route fixtures contain parent-local mocks; process behavior is tested separately.
+    monkeypatch.setattr(main, "isolated", lambda fn, ticker: fn(ticker))
     report = export_input()["report"]
     monkeypatch.setattr(sec_core, "get_financial_report", lambda t: report)
     for f in [main.cached_financials, main.cached_pay_efficiency, main.cached_trends]:
@@ -321,15 +323,20 @@ def _fails(ticker):
     raise ValueError(f"no filing for {ticker}")
 
 
+def _isolation_result(ticker):
+    return {"ticker": ticker, "rows": list(range(3))}
+
+
 def test_isolated_lookup_returns_result_and_reports_failures():
     import pytest
     import main
-    assert main.isolated(lambda t: {"ticker": t, "rows": list(range(3))}, "CAT") == {"ticker": "CAT", "rows": [0, 1, 2]}
+    assert main.isolated(_isolation_result, "CAT") == {"ticker": "CAT", "rows": [0, 1, 2]}
     with pytest.raises(RuntimeError, match="no filing for JPM"):
         main.isolated(_fails, "JPM")
     # A child stopped by the out-of-memory killer gets a plain explanation, and the server process carries on
-    with pytest.raises(RuntimeError, match="too large for the free server's memory"):
-        main.isolated(_killed, "C")
+    if sys.platform != "win32":  # SIGKILL/OOM exit status is Unix-specific.
+        with pytest.raises(RuntimeError, match="too large for the free server's memory"):
+            main.isolated(_killed, "C")
 
 
 def _bundle(tmp_path, files):
