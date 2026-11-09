@@ -3,7 +3,9 @@ Offline tests for trends, Pay Efficiency history, peer ranking and the export fi
 SEC is replaced by small hand-made companyfacts and Pay Versus Performance files, so the expected
 numbers can be checked by hand. Run from api/:  python -m pytest tests
 """
+import csv
 import io
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -171,6 +173,67 @@ def test_export_skips_missing_parts():
     assert export.build_pdf(d)[:5] == b"%PDF-"
 
 
+def csv_rows(data):
+    """The CSV export read back as rows (utf-8-sig drops Excel's BOM)."""
+    return list(csv.reader(io.StringIO(export.build_csv(data).decode("utf-8-sig"))))
+
+
+def test_csv_headers_summary_and_source_traceability(fake_sec):
+    rows = csv_rows(export_input())
+    assert rows[0] == ["Section", "Item", "Value", "Filed line item", "XBRL concept", "Period", "Unit", "Source"]
+    summary = {r[1]: r[2] for r in rows if r[0] == "Summary"}
+    assert summary["Company"] == "Caterpillar Inc.’s test"
+    assert summary["Ticker"] == "CAT"
+    assert summary["10-K"] == "https://www.sec.gov/10k"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", summary["Exported"])
+    assert "No AI-generated numbers" in summary["Source"]
+    ratios = {r[1]: r[2] for r in rows if r[0] == "Ratios"}
+    assert ratios == {"Gross Margin": "33.8%", "Operating Margin": "16.2%", "Current Ratio": "1.44x",
+                      "Total Liabilities-to-Equity": "3.62x"}
+    inputs = {r[1]: r for r in rows if r[0] == "Ratio inputs"}
+    assert set(inputs) == {"Revenue", "Gross Profit"}
+    rev = inputs["Revenue"]
+    assert float(rev[2]) == 68_000 and rev[3] == "Total sales and revenues"
+    assert rev[4] == "us-gaap_Revenues" and rev[5] == "2025-12-31 (FY)"
+    assert rev[6] == "USD millions" and rev[7] == "https://www.sec.gov/10k"   # unit and filing URL next to the number
+
+
+def test_csv_values_stay_numeric():
+    d = {"report": {"ticker": "CAT", "name": "Caterpillar", "tenk_url": "https://x", "statements": {},
+                    "ratios": {"Gross Margin": "33.8%"},
+                    "inputs": {"Revenue": {"value_m": 68_000.0, "label": "Total sales and revenues",
+                                           "concept": "us-gaap_Revenues", "period": "2025-12-31 (FY)"}}},
+         "pay_efficiency": None, "trends": None, "notes": []}
+    raw = export.build_csv(d)
+    assert raw.startswith(b"\xef\xbb\xbf")                                # BOM so Excel reads the UTF-8
+    assert "Ratio inputs,Revenue,68000.0," in raw.decode("utf-8-sig")     # bare number, no quoting or prefix
+
+
+def test_csv_quoting_and_formula_injection():
+    d = {"report": {"ticker": "CAT", "name": "=SUM(A1:A2)", "tenk_url": "https://www.sec.gov/10k", "statements": {},
+                    "ratios": {"Gross Margin": "33.8%"},
+                    "inputs": {"Revenue": {"value_m": 68_000.0, "label": 'Total sales, "revenue"',
+                                           "concept": "us-gaap_Revenues", "period": "2025-12-31 (FY)"}}},
+         "pay_efficiency": None, "trends": None, "notes": ["=CMD('calc')"]}
+    text = export.build_csv(d).decode("utf-8-sig")
+    assert "'=SUM(A1:A2)" in text and "'=CMD('calc')" in text    # inert: leading apostrophe, not a formula
+    rows = csv_rows(d)
+    label = next(r for r in rows if r[0] == "Ratio inputs" and r[1] == "Revenue")[3]
+    assert label == 'Total sales, "revenue"'                     # comma and quote survive a round trip
+
+
+def test_csv_missing_values():
+    d = {"report": {"ticker": "JPM", "name": "JPMorgan", "tenk_url": "", "statements": {},
+                    "ratios": {"Gross Margin": "N/A"}, "inputs": {"Revenue": None, "Gross Profit": None}},
+         "pay_efficiency": None, "trends": None, "notes": ["Trends left out: timed out"]}
+    rows = csv_rows(d)
+    inputs = {r[1]: r for r in rows if r[0] == "Ratio inputs"}
+    for r in inputs.values():
+        assert r[2] == "" and r[3] == "Not reported" and r[4] == "" and r[5] == "" and r[6] == ""
+    assert [r[1] for r in rows if r[0] == "Ratios"] == ["Gross Margin"]
+    assert [r[1] for r in rows if r[0] == "Notes"] == ["Trends left out: timed out"]
+
+
 def test_api_routes(fake_sec, monkeypatch):
     from fastapi.testclient import TestClient
     import main
@@ -184,7 +247,12 @@ def test_api_routes(fake_sec, monkeypatch):
     assert x.status_code == 200 and x.headers["content-disposition"] == 'attachment; filename="CAT_SEC_Terminal.xlsx"'
     p = client.get("/api/export/CAT.pdf")
     assert p.status_code == 200 and p.content[:5] == b"%PDF-"
+    c = client.get("/api/export/CAT.csv")
+    assert c.status_code == 200 and c.headers["content-type"].startswith("text/csv")
+    assert c.headers["content-disposition"] == 'attachment; filename="CAT_SEC_Terminal.csv"'
+    assert c.content.startswith(b"\xef\xbb\xbfSection,")
     assert client.get("/api/export/BAD!!.pdf").status_code == 400
+    assert client.get("/api/export/BAD!!.csv").status_code == 400
 
 
 def test_companyfacts_keeps_only_needed_rows_and_reads_once(monkeypatch):
@@ -348,3 +416,54 @@ def test_prebuild_saves_each_lookup_and_skips_failures(tmp_path, monkeypatch):
     assert (ticker, saved) == ("MSFT", ["company"]) and "no proxy" in failed["governance"]
     assert json.load(open(os.path.join("prebuilt", "MSFT", "company.json"))) == {"ticker": "MSFT"}
     assert not os.path.exists(os.path.join("prebuilt", "MSFT", "governance.json"))
+
+@pytest.mark.parametrize("unit", ["USD", "USD thousands", "=HYPERLINK(\"https://evil\")", "\t@SUM(1)"])
+def test_csv_normalized_millions_ignore_caller_unit(unit):
+    data = {"report": {"name": "Test", "ticker": "T", "tenk_url": "https://sec.gov/filing",
+                       "ratios": {}, "inputs": {
+                           "Revenue": {"value_m": -1234.5, "label": "Revenue", "concept": "tag",
+                                       "period": "2025", "unit": unit},
+                           "Missing": None}}}
+    rows = csv_rows(data)
+    inputs = {r[1]: r for r in rows if r[0] == "Ratio inputs"}
+    assert inputs["Revenue"][2:3] == ["-1234.5"]
+    assert inputs["Revenue"][6] == "USD millions"
+    assert inputs["Missing"][2:7] == ["", "Not reported", "", "", ""]
+    assert unit not in [r[6] for r in rows if r[0] == "Ratio inputs"]
+
+
+def test_csv_each_ratio_cites_only_existing_relevant_inputs():
+    mapping = {
+        "Gross Margin": ("Gross Profit", "Revenue"),
+        "Operating Margin": ("Operating Income", "Revenue"),
+        "Current Ratio": ("Current Assets", "Current Liabilities"),
+        "Total Liabilities-to-Equity": ("Total Liabilities", "Shareholders' Equity"),
+    }
+    inputs = {key: {"value_m": 12.5, "label": f"Filed {key}", "concept": f"tag:{i}",
+                    "period": f"period {i}"}
+              for i, key in enumerate(dict.fromkeys(k for keys in mapping.values() for k in keys))}
+    # Derived concepts are exported verbatim; unavailable underlying tags are not invented.
+    inputs["Gross Profit"]["concept"] = "Derived: Revenue - Cost of Revenue"
+    inputs["Current Assets"] = None
+    data = {"report": {"name": "Test", "ticker": "T", "tenk_url": "https://sec.gov/filing",
+                       "ratios": {name: "N/A" for name in mapping}, "inputs": inputs}}
+    rows = [r for r in csv_rows(data) if r[0] == "Ratios"]
+    for row in rows:
+        assert row[2] == "N/A" and row[7] == "https://sec.gov/filing"
+        for col, field in [(3, "label"), (4, "concept"), (5, "period")]:
+            assert row[col] == "; ".join(f"{key}: {inputs[key][field]}"
+                                          for key in mapping[row[1]] if inputs[key])
+    inputs.clear()
+    assert all(r[3:6] == ["", "", ""] for r in csv_rows(data) if r[0] == "Ratios")
+
+
+@pytest.mark.parametrize("text", ["=SUM(1)", " +SUM(1)", "-SUM(1)", "@SUM(1)", "\ttext", "\rtext", "\ntext"])
+def test_csv_sanitizes_all_untrusted_text_cells(text):
+    data = {"report": {"name": text, "ticker": text, "tenk_url": text,
+                       "ratios": {text: text}, "inputs": {
+                           text: {"value_m": text, "label": text, "concept": text, "period": text}}},
+            "notes": [text]}
+    rows = csv_rows(data)
+    assert all(cell != text for row in rows for cell in row)
+    assert next(r for r in rows if r[0] == "Ratio inputs")[1:6] == ["'" + text] * 5
+    assert next(r for r in rows if r[0] == "Ratios")[7] == "'" + text

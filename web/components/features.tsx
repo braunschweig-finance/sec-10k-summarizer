@@ -443,11 +443,11 @@ export function ComparePanel({ report }: { report: Report }) {
 // ---------- Export buttons ----------
 
 export function ExportButtons({ ticker }: { ticker: string }) {
-  const [busy, setBusy] = useState<"xlsx" | "pdf" | null>(null);
+  const [busy, setBusy] = useState<"xlsx" | "pdf" | "csv" | null>(null);
   const [error, setError] = useState<string | null>(null);
   if (!API_URL) return null;
 
-  async function run(kind: "xlsx" | "pdf") {
+  async function run(kind: "xlsx" | "pdf" | "csv") {
     setBusy(kind);
     setError(null);
     try {
@@ -461,14 +461,14 @@ export function ExportButtons({ ticker }: { ticker: string }) {
 
   return (
     <>
-      {(["xlsx", "pdf"] as const).map((k) => (
+      {(["xlsx", "pdf", "csv"] as const).map((k) => (
         <button
           key={k}
           onClick={() => run(k)}
           disabled={busy !== null}
           className="rounded-full border border-brass/60 bg-brass/10 px-4 py-2 text-sm text-brass hover:bg-brass/20 disabled:opacity-60"
         >
-          {busy === k ? "Building…" : k === "xlsx" ? "Download Excel ↓" : "Download PDF ↓"}
+          {busy === k ? "Building…" : k === "xlsx" ? "Download Excel ↓" : k === "pdf" ? "Download PDF ↓" : "Download CSV ↓"}
         </button>
       ))}
       {error && <p className="basis-full text-right text-xs text-rose">{error}</p>}
