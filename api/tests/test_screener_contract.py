@@ -31,9 +31,18 @@ def offline(monkeypatch, tmp_path):
         attempts.append("network/AI/live lookup")
         raise AssertionError("Screener attempted network/AI/live lookup")
 
-    # Guard before importing the app. TestClient's in-process transport needs no sockets.
-    monkeypatch.setattr(socket.socket, "connect", forbidden)
-    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    # Windows asyncio uses loopback socket pairs for its internal wakeup channel.
+    # Permit that IPC; external sockets, DNS and all real HTTP remain forbidden.
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    def guarded(original):
+        def connect(sock, address):
+            if isinstance(address, tuple) and address[0] in ("127.0.0.1", "::1"):
+                return original(sock, address)
+            return forbidden(sock, address)
+        return connect
+    monkeypatch.setattr(socket.socket, "connect", guarded(original_connect))
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded(original_connect_ex))
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr(socket, "getaddrinfo", forbidden)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden)
