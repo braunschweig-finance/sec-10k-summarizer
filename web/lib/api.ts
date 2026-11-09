@@ -83,8 +83,8 @@ export async function fetchValuation(ticker: string): Promise<Valuation> {
   return res.json();
 }
 
-// Excel or PDF of the ratios, Pay Efficiency, peer ranking and trends, built by the API from the same data as the page
-export async function downloadExport(ticker: string, kind: "xlsx" | "pdf") {
+// Excel/PDF cover ratios, Pay Efficiency, peers and trends; CSV covers ratios and their inputs.
+export async function downloadExport(ticker: string, kind: "xlsx" | "pdf" | "csv") {
   const res = await callApi(`/api/export/${encodeURIComponent(ticker)}.${kind}`);
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || `Couldn't build the file (${res.status})`);
   saveBlob(await res.blob(), `${ticker}_SEC_Terminal.${kind}`);

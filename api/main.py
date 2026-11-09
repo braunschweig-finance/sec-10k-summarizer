@@ -519,3 +519,14 @@ def export_pdf(ticker: str):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{t}_SEC_Terminal.pdf"'},
     )
+
+
+@app.get("/api/export/{ticker}.csv")
+def export_csv(ticker: str):
+    data = export_data(ticker)
+    t = data["report"]["ticker"]
+    return Response(
+        content=export.build_csv(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{t}_SEC_Terminal.csv"'},
+    )

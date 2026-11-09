@@ -1,7 +1,8 @@
 """
-Excel and PDF downloads of one company's numbers. Both are built from the same JSON the page shows,
-so every figure in the files matches the site and keeps its XBRL concept and filing next to it.
+Excel, PDF and CSV downloads of one company's numbers. All are built from the same JSON the page
+shows, so every figure in the files matches the site and keeps its XBRL concept and filing next to it.
 """
+import csv
 import io
 from datetime import date
 
@@ -122,6 +123,58 @@ def build_xlsx(data):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _safe_cell(v):
+    """Text starting with a formula character would run as a formula when opened in a spreadsheet,
+    so it gets a leading apostrophe (shown as text, not executed). Numbers and blanks pass through
+    untouched, so values stay numeric."""
+    if isinstance(v, str) and (v.startswith(("\t", "\r", "\n")) or v.lstrip()[:1] in ("=", "+", "-", "@")):
+        return "'" + v
+    return v
+
+
+def build_csv(data):
+    """Ratios and normalized USD-million inputs with available filing citations."""
+    r = data["report"]
+    tenk = r.get("tenk_url", "")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+
+    def row(cells):
+        w.writerow([_safe_cell(cell) for cell in cells])
+
+    row(["Section", "Item", "Value", "Filed line item", "XBRL concept", "Period", "Unit", "Source"])
+    row(["Summary", "Company", r["name"]])
+    row(["Summary", "Ticker", r["ticker"]])
+    row(["Summary", "10-K", tenk])
+    row(["Summary", "Exported", date.today().isoformat()])
+    row(["Summary", "Source", "SEC EDGAR filings (10-K XBRL). "
+                             "No AI-generated numbers. Ratio inputs are in USD millions."])
+    ratio_inputs = {
+        "Gross Margin": ("Gross Profit", "Revenue"),
+        "Operating Margin": ("Operating Income", "Revenue"),
+        "Current Ratio": ("Current Assets", "Current Liabilities"),
+        "Total Liabilities-to-Equity": ("Total Liabilities", "Shareholders' Equity"),
+    }
+    for name, value in r["ratios"].items():
+        inputs = [(key, r["inputs"].get(key)) for key in ratio_inputs.get(name, ())]
+
+        def citation(field):
+            return "; ".join(f"{key}: {hit[field]}" for key, hit in inputs
+                             if hit and hit.get(field) is not None)
+
+        row(["Ratios", name, value, citation("label"), citation("concept"), citation("period"), "", tenk])
+    for name, h in r["inputs"].items():
+        if h:
+            row(["Ratio inputs", name, h["value_m"], h["label"],
+                 h["concept"], h["period"], "USD millions", tenk])
+        else:
+            row(["Ratio inputs", name, "", "Not reported", "", "", "", tenk])
+    for n in data.get("notes", []):
+        row(["Notes", n])
+    # The BOM tells Excel the file is UTF-8, so company names with curly quotes read correctly
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
 def _latin1(text):

@@ -116,7 +116,7 @@ export function RatiosPanel({ report }: { report: Report }) {
         </div>
         <p className="text-sm text-muted">
           N/A means the filing doesn&apos;t report that line on the face of its statements (banks have no gross profit or current assets, for
-          example). Derived inputs say so under the line item. Hover a line item to see its XBRL tag; the Excel and PDF exports list every tag.
+          example). Derived inputs say so under the line item. Hover a line item to see its XBRL tag; the Excel, PDF and CSV exports list every tag.
         </p>
       </div>
     </div>
