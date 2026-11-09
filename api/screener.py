@@ -82,6 +82,51 @@ def _benchmark(data, sector):
     return {**group, 'group': name} if isinstance(group, dict) else None
 
 
+def _valid_governance(gov, pay, benchmark):
+    metrics = gov.get('metrics', {})
+    if not isinstance(metrics, dict):
+        return False
+    for name, field in (('Board Independence', 'pct'), ('Say-on-Pay Support', 'pct'),
+                        ('CEO Pay Ratio', 'value')):
+        metric = metrics.get(name)
+        if metric is not None and (not isinstance(metric, dict) or
+                metric.get(field) is not None and _number(metric[field]) is None):
+            return False
+    if pay.get('pct') is not None and _number(pay['pct']) is None:
+        return False
+    stats = (benchmark or {}).get('metrics', {})
+    if not isinstance(stats, dict):
+        return False
+    return all(value is None or isinstance(value, dict) and
+               all(_number(value.get(k)) is not None for k in ('p25', 'median', 'p75'))
+               for name, value in stats.items() if name in grade.GOV_METRICS)
+
+
+def _valid_insiders(ins):
+    for name in ('buys', 'sells', 'planned_sells'):
+        if name == 'planned_sells' and name not in ins:
+            continue
+        value = ins.get(name)
+        if not isinstance(value, dict):
+            return False
+        if any(_number(value.get(k)) is None for k in ('count', 'value')):
+            return False
+    cluster = ins.get('cluster')
+    return cluster is None or cluster is False or isinstance(cluster, dict) and (
+        _number(cluster.get('insiders')) is not None and
+        _text(cluster.get('from')) is not None and _text(cluster.get('to')) is not None)
+
+
+def _unavailable_row(ticker):
+    """Build a complete failure row without touching any cached input again."""
+    fields = ('name', 'sector', 'fy_end', 'pay_efficiency_pct', 'grade', 'grade_score',
+              'upside_pct', 'price_date', 'valuation_confidence')
+    sources = dict.fromkeys(('financials_url', 'proxy_url', 'valuation_source'))
+    return dict(ticker=ticker, **dict.fromkeys(fields), sources=sources,
+                missing=[f'{field}: Cached company input unavailable or malformed.'
+                         for field in (*fields, *(f'sources.{key}' for key in sources))])
+
+
 def _row(root, ticker, universe, targets, bench):
     records = {kind: _read(root / ticker / (kind + '.json')) for kind in KINDS}
     company, gov, pay, rf, ins, fund = (records[k] or {} for k in KINDS)
@@ -113,21 +158,37 @@ def _row(root, ticker, universe, targets, bench):
         row['upside_pct'] = _number(val.get('upside_pct'))
         row['valuation_confidence'] = val.get('confidence') if val.get('confidence') in ('low', 'normal') else None
         row['sources']['valuation_source'] = _text(universe.get('source')) or valuation.SOURCE
+    if target:
+        if target.get('sane') is False:
+            row['missing'].append('upside_pct: The market value from the filed share count looks out of line '
+                                  'with sales (often a company with several share classes that reports shares '
+                                  'in another class). Treat this estimate with care.')
+        if target.get('debt') is None:
+            row['missing'].append('upside_pct: No debt is tagged in the 10-K, so debt is counted as zero.')
     parts, errors = {}, {}
-    if records['governance'] is not None and gov.get('available') is not False:
-        parts['governance'] = (gov, pay, _benchmark(bench, sector))
+    benchmark = _benchmark(bench, sector)
+    if (records['governance'] is not None and gov.get('available') is not False
+            and _valid_governance(gov, pay, benchmark)):
+        parts['governance'] = (gov, pay, benchmark)
     if (records['red_flags'] is not None and rf.get('available') is not False
             and isinstance(rf.get('flags'), list)
-            and all(isinstance(f, dict) and f.get('severity') in grade.FLAG_POINTS for f in rf['flags'])):
+            and all(isinstance(f, dict) and isinstance(f.get('severity'), str)
+                    and f['severity'] in grade.FLAG_POINTS for f in rf['flags'])):
         parts['red_flags'] = rf
     if (records['insiders'] is not None and ins.get('available') is not False
-            and isinstance(ins.get('buys'), dict) and isinstance(ins.get('sells'), dict)):
-        parts['insiders'] = (ins, target.get('market_cap') if val and val.get('available') else None)
+            and _valid_insiders(ins)):
+        market_cap = _number(target.get('market_cap'))
+        market_cap = market_cap if market_cap is not None and market_cap > 0 else None
+        parts['insiders'] = (ins, market_cap)
+        if market_cap is None:
+            row['missing'].append('grade.insiders: Cached finite positive market cap unavailable; '
+                                  'insider selling thresholds based on market value cannot be evaluated.')
     if val:
         parts['valuation'] = val
     for part in grade.WEIGHTS:
         if part not in parts:
-            errors[part] = 'Cached input unavailable.'
+            errors[part] = 'Cached input unavailable or malformed.'
+            row['missing'].append(f'grade.{part}: {errors[part]}')
     result = None
     try:
         result = grade.build(ticker, row['name'], parts, errors)
@@ -139,7 +200,7 @@ def _row(root, ticker, universe, targets, bench):
     reasons = {
         'name': 'Cached company name unavailable.', 'sector': 'SEC industry does not map to a sector.',
         'fy_end': 'Cached fiscal year end unavailable.',
-        'pay_efficiency_pct': pay.get('reason') or 'Finite operating-income Pay Efficiency unavailable in cache.',
+        'pay_efficiency_pct': _text(pay.get('reason')) or 'Finite operating-income Pay Efficiency unavailable in cache.',
         'grade': (result or {}).get('reason') or 'Cached inputs could not produce Company Grade.',
         'grade_score': 'Company Grade unavailable.',
         'upside_pct': (val or {}).get('reason') or 'Cached peer valuation unavailable.',
@@ -197,12 +258,12 @@ def _snapshot():
                         continue
                     if not _number(r['price']) or r['price'] <= 0 or not _number(r['shares']) or r['shares'] <= 0:
                         continue
+                    mappings = (r['features'], r['figures'], r['multiples'])
+                    if any(not isinstance(m, dict) for m in mappings):
+                        continue
                     if any(k not in r['features'] for k in valuation.FEATURES):
                         continue
                     if any(k not in r['multiples'] for k in valuation.METHODS):
-                        continue
-                    mappings = (r['features'], r['figures'], r['multiples'])
-                    if any(not isinstance(m, dict) for m in mappings):
                         continue
                     if any(v is not None and _number(v) is None for m in mappings for v in m.values()):
                         continue
@@ -222,7 +283,7 @@ def _snapshot():
                     rows.append(_row(root, ticker, universe, targets, bench))
                 except (KeyError, TypeError, ValueError, ArithmeticError, AttributeError):
                     # Corruption must not turn into an invented grade or fail other companies.
-                    rows.append(_row(root, ticker, {'rows': []}, {}, None))
+                    rows.append(_unavailable_row(ticker))
             if not peers:
                 warnings.append('Cached valuation universe unavailable; peer valuation is missing.')
             warnings.append('Estimates use cached prices. Company Grade is descriptive; low-confidence valuations are not reliable investment signals.')

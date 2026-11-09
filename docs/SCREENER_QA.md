@@ -4,6 +4,8 @@ Scope: `api/tests/test_screener_contract.py` only; no implementation changes. Re
 
 ## Execution status (2026-11-08)
 
+Final integration follow-up: 264 API tests, 30 controller tests, 13 Terminal regression tests, TypeScript and the production web build passed. A local production preview using the public October 26 snapshot displayed 1,017 companies; browser checks verified CAT search, no-match messaging, clearing filters and grade filtering (96 Grade A matches). Independent API and UI re-reviews approved the repaired insider-input validation, retained cached market cap, visible grade/valuation caveats and negative-compensation explanation. Final browser verification confirmed the corrected text and a populated valuation cell's missing-debt caveat. No financial formulas were changed. Original worktree-only execution limitations below are historical.
+
 **Not executed; no passing behavior claimed.** From `api/`, attempted:
 
 ```powershell

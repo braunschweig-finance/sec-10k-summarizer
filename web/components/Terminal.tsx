@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import type { Report } from "@/lib/types";
 import { API_URL, fetchGovernance, fetchPayEfficiency, fetchReport, fetchRisks, fetchTrends } from "@/lib/api";
@@ -39,6 +39,15 @@ export default function Terminal() {
   const [tab, setTab] = useState<TabId>("ratios");
   const [slow, setSlow] = useState(false);
   const current = useRef(0);
+
+  // A screener row (or a shared link) arrives as ?ticker=CAT: load that company once on mount.
+  // Deliberately placed before the load declaration below: load is a hoisted function declaration, and the
+  // standalone closure tests (Terminal.test.mjs) extract the source starting at "async function load(".
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("ticker");
+    if (t) load(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function load(sym: string) {
     const t = sym.toUpperCase().trim();
@@ -114,6 +123,12 @@ export default function Terminal() {
               {API_URL ? "Live · SEC EDGAR" : "Preview · sample data"}
             </span>
             <span className="eyebrow">Form 10-K · Form DEF 14A · XBRL</span>
+            <a
+              href="/screener"
+              className="ml-auto rounded-full border border-line bg-panel/70 px-3 py-1 font-mono text-xs text-muted backdrop-blur transition-colors hover:border-brass hover:text-paper"
+            >
+              Screener →
+            </a>
           </motion.div>
 
           <h1 className="max-w-4xl text-5xl leading-[0.95] font-extrabold tracking-tight sm:text-7xl">
