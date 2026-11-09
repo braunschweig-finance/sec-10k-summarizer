@@ -1,6 +1,8 @@
 "use client";
 
-import {useEffect, useRef, type ReactNode} from "react";
+import {useEffect, useRef, useState, type ReactNode} from "react";
+import {saveBlob} from "@/lib/api";
+import {comparisonCsv} from "@/lib/comparisonCsv";
 import type {ScreenerRow} from "@/lib/screener";
 import {fieldReasons} from "@/lib/screenerContext";
 import {canCompare} from "@/lib/screenerSelection";
@@ -10,6 +12,15 @@ export default function ScreenerComparison({rows,builtAt,onClose}: {
   rows:readonly ScreenerRow[]; builtAt:string|null; onClose:()=>void;
 }) {
   const heading=useRef<HTMLHeadingElement>(null);
+  const [exportError,setExportError]=useState("");
+  const downloadCsv=()=>{
+    setExportError("");
+    try {
+      saveBlob(new Blob([comparisonCsv(rows,builtAt)],{type:"text/csv;charset=utf-8"}),"SEC_company_comparison.csv");
+    } catch {
+      setExportError("Could not prepare the CSV. Check the selected companies and try again.");
+    }
+  };
   useEffect(()=>{heading.current?.focus();},[]);
   const pct=(value:number|null)=>value===null ? "N/A" : `${value.toFixed(2)}%`;
   const metrics: {label:string; render:(row:ScreenerRow)=>ReactNode}[]=[
@@ -33,8 +44,12 @@ export default function ScreenerComparison({rows,builtAt,onClose}: {
   return <section aria-labelledby="screener-comparison-title" className="min-w-0 rounded-2xl border border-brass/40 bg-panel p-4 sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 id="screener-comparison-title" ref={heading} tabIndex={-1} className="text-2xl font-bold">Side-by-side comparison</h2>
-      <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-line px-4 hover:border-brass">Close comparison</button>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={!canCompare(rows)} onClick={downloadCsv} className="min-h-11 rounded-xl border border-brass px-4 text-brass hover:bg-brass/10 disabled:opacity-40">Download CSV</button>
+        <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-line px-4 hover:border-brass">Close comparison</button>
+      </div>
     </div>
+    {exportError&&<p role="alert" className="mt-2 text-sm text-rose">{exportError}</p>}
     {!canCompare(rows)?<p>Select 2–4 distinct companies to compare.</p>:<>
       <p className="mt-3 text-sm text-muted">Selected from snapshot {builtAt??"with unknown build date"}. Fiscal periods and cached price dates can differ. Sector differences affect comparability; these are descriptive metrics, not a ranking or investment recommendation. Missing values are not zero.</p>
       <p id="comparison-scroll-help" className="mt-2 text-xs text-muted">Scroll sideways to see every company. Keyboard: focus the comparison table and use the left and right arrow keys.</p>
