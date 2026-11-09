@@ -6,7 +6,7 @@ them to worker CLIs as exact argv lists (no shell, no interpolation),
 and records results.
 
 Limits, and what they do NOT claim:
-- MAX_MANAGED_JOBS = 2 (initial), HARD_CEILING = 4. Enforced for jobs
+- MAX_MANAGED_JOBS = 4, HARD_CEILING = 4. Enforced for jobs
   *this controller* dispatches only; the ceiling cannot be raised above
   4 by constructor overrides. They do not count, limit, or measure any
   global provider or request limit (ISU sessions, Codex/Claude
@@ -57,7 +57,7 @@ DEFAULT_STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "se
 DEFAULT_DB = DEFAULT_STATE_DIR / "state.db"
 DEFAULT_INSTRUCTIONS = REPO_ROOT / "AGENTS.md"
 
-MAX_MANAGED_JOBS = 2   # initial: automation slots
+MAX_MANAGED_JOBS = 4   # owner-authorized managed worker slots
 HARD_CEILING = 4       # absolute managed ceiling (not raiseable via overrides)
 
 
