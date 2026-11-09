@@ -229,10 +229,10 @@ def prebuilt_status():
 def company_screener(search: str | None = None, sector: str | None = None,
                      grade: str | None = None, max_pay_efficiency_pct: float | None = None,
                      min_upside_pct: float | None = None, sort: str = "ticker", order: str = "asc",
-                     limit: int = 50, offset: int = 0):
+                     limit: int = 50, offset: int = 0, compare: str | None = None):
     try:
         return screener.screen(search, sector, grade, max_pay_efficiency_pct,
-                               min_upside_pct, sort, order, limit, offset)
+                               min_upside_pct, sort, order, limit, offset, compare=compare)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

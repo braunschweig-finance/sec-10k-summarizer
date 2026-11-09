@@ -24,6 +24,7 @@ export type ScreenerRow = {
 };
 
 export type ScreenerData = {
+  comparison?: { tickers: string[]; rows: ScreenerRow[]; missing: string[] };
   available: boolean;
   built_at: string | null;
   total: number;
@@ -37,6 +38,7 @@ export type ScreenerData = {
 };
 
 export type ScreenerQuery = {
+  compare?: string;
   search?: string;
   sector?: string;
   grade?: "A" | "B" | "C" | "D" | "F";
@@ -54,6 +56,7 @@ export const PAGE_SIZES = [25, 50, 100, 200] as const;
 
 export function screenerParams(q: ScreenerQuery): URLSearchParams {
   const p = new URLSearchParams();
+  if (q.compare) p.set("compare", q.compare);
   if (q.search) p.set("search", q.search);
   if (q.sector) p.set("sector", q.sector);
   if (q.grade) p.set("grade", q.grade);

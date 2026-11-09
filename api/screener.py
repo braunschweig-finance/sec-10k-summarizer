@@ -296,7 +296,7 @@ def _snapshot():
 
 
 def screen(search=None, sector=None, grade=None, max_pay_efficiency_pct=None, min_upside_pct=None,
-           sort='ticker', order='asc', limit=50, offset=0):
+           sort='ticker', order='asc', limit=50, offset=0, compare=None):
     """Filter one bounded snapshot; numeric values are percentage points."""
     if sort not in SORTS or order not in ('asc', 'desc') or grade not in (None, 'A', 'B', 'C', 'D', 'F'):
         raise ValueError('Invalid screener sort, order or grade.')
@@ -305,6 +305,18 @@ def screen(search=None, sector=None, grade=None, max_pay_efficiency_pct=None, mi
     for value in (max_pay_efficiency_pct, min_upside_pct):
         if value is not None and _number(value) is None:
             raise ValueError('Numeric filters must be finite.')
+    tickers = []
+    if compare is not None:
+        if not isinstance(compare, str) or len(compare) > 128:
+            raise ValueError('Invalid comparison tickers.')
+        for value in compare.split(','):
+            ticker = value.strip().upper()
+            if not _TICKER.fullmatch(ticker):
+                raise ValueError('Invalid comparison tickers.')
+            if ticker not in tickers:
+                tickers.append(ticker)
+        if not 1 <= len(tickers) <= 4:
+            raise ValueError('Comparison requires one to four unique tickers.')
     snapshot = _snapshot()
     query = (search or '').strip().casefold()
     rows = [r for r in snapshot['rows'] if
@@ -315,5 +327,13 @@ def screen(search=None, sector=None, grade=None, max_pay_efficiency_pct=None, mi
     present = sorted((r for r in rows if r[sort] is not None), key=lambda r: r['ticker'])
     present.sort(key=lambda r: r[sort].casefold() if isinstance(r[sort], str) else r[sort], reverse=order == 'desc')
     missing = sorted((r for r in rows if r[sort] is None), key=lambda r: r['ticker'])
-    return copy.deepcopy({**snapshot, 'matched': len(rows), 'limit': limit, 'offset': offset,
-                          'rows': (present + missing)[offset:offset + limit]})
+    result = {**snapshot, 'matched': len(rows), 'limit': limit, 'offset': offset,
+              'rows': (present + missing)[offset:offset + limit]}
+    if compare is not None:
+        by_ticker = {r['ticker']: r for r in snapshot['rows']}
+        result['comparison'] = {
+            'tickers': tickers,
+            'rows': [by_ticker[t] for t in tickers if t in by_ticker],
+            'missing': [t for t in tickers if t not in by_ticker],
+        }
+    return copy.deepcopy(result)

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import ScreenerDataNotes from "./ScreenerDataNotes";
 import ScreenerComparison from "./ScreenerComparison";
 import {canCompare, MAX_COMPARISON_COMPANIES, sameSelectionSnapshot, toggleSelection} from "@/lib/screenerSelection";
+import {parseComparisonUrl, writeComparisonParams} from "@/lib/comparisonUrl";
 import { dataAgeDays, fieldReasons } from "@/lib/screenerContext";
 import { API_URL } from "@/lib/api";
 import { DEFAULT_SCREENER_STATE, parseScreenerUrl, serializeScreenerUrl, type ScreenerUrlState } from "@/lib/screenerUrl";
@@ -32,10 +33,11 @@ const fmtInt = (n: number) => n.toLocaleString("en-US");
 
 const URL_KEYS = ["search", "sector", "grade", "max_pay_efficiency_pct", "min_upside_pct", "sort", "order", "limit", "offset"];
 
-function screenUrl(state: ScreenerUrlState): URL {
+function screenUrl(state: ScreenerUrlState, tickers:readonly string[], open:boolean): URL {
   const url = new URL(window.location.href);
   URL_KEYS.forEach((key) => url.searchParams.delete(key));
   new URLSearchParams(serializeScreenerUrl(state)).forEach((value, key) => url.searchParams.set(key, value));
+  url.search = writeComparisonParams(url.searchParams,tickers,open).toString();
   return url;
 }
 
@@ -67,30 +69,38 @@ export default function Screener() {
   const copyId = useRef(0);
   const [selection, setSelection] = useState<{builtAt:string|null; source:ScreenerData; rows:ScreenerRow[]} | null>(null);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [wantedTickers, setWantedTickers] = useState<string[]>([]);
+  const [restoreComparisonOpen, setRestoreComparisonOpen] = useState(false);
+  const [resolvedQuery, setResolvedQuery] = useState<string | null>(null);
   const [selectionMessage, setSelectionMessage] = useState("");
   const compareButton = useRef<HTMLButtonElement>(null);
   const selectedRows = selection && data && sameSelectionSnapshot(selection,data) ? selection.rows : [];
-  const selectionReady = !loading && !error && !!data?.available && searchText.trim().slice(0,100) === search;
+  const comparisonIds = wantedTickers.join(",");
+  // A previous response with the same tickers may still belong to different filters.
+  const currentQuery = serializeScreenerUrl({search,sector,grade,maxPay,minUpside,sort,order,limit,offset}) + "|compare=" + comparisonIds;
+  const selectionReady = resolvedQuery === currentQuery && !loading && !error && !!data?.available && searchText.trim().slice(0,100) === search;
+  const comparisonLoaded = data?.comparison?.tickers.join(",") === comparisonIds;
+  const comparisonMissing = comparisonLoaded ? data?.comparison?.missing ?? [] : [];
+  const comparisonReady = selectionReady && comparisonLoaded && !comparisonMissing.length && selectedRows.length === wantedTickers.length && canCompare(selectedRows);
 
   useEffect(() => {
-    if (selection && data && !sameSelectionSnapshot(selection,data)) {
-      setSelection(null);
-      setComparisonOpen(false);
-      setSelectionMessage("The snapshot changed or its build date could not be verified. Select companies again so the comparison uses one snapshot.");
+    if (restoreComparisonOpen && comparisonReady) {
+      setComparisonOpen(true);
+      setRestoreComparisonOpen(false);
     }
-  }, [data, selection]);
+  }, [restoreComparisonOpen, comparisonReady]);
 
   useEffect(()=>{if (!selectionReady) setComparisonOpen(false);},[selectionReady]);
 
   const selectRow = (row:ScreenerRow) => {
     if (!selectionReady || !data) return;
-    if (selectedRows.length <= 2 && selectedRows.some(item=>item.ticker===row.ticker)) setComparisonOpen(false);
+    if (wantedTickers.length <= 2 && wantedTickers.includes(row.ticker)) {setComparisonOpen(false);setRestoreComparisonOpen(false);}
     setSelectionMessage("");
-    setSelection(previous => ({builtAt:data.built_at,source:data, rows:toggleSelection(previous && sameSelectionSnapshot(previous,data) ? previous.rows : [],row)}));
+    setWantedTickers(previous=>toggleSelection(previous.map(ticker=>({ticker})),row).map(item=>item.ticker));
   };
   const removeSelected = (ticker:string) => {
-    if (selectedRows.length <= 2) setComparisonOpen(false);
-    setSelection(previous => previous ? {...previous,rows:previous.rows.filter(row=>row.ticker!==ticker)} : null);
+    if (wantedTickers.length <= 2) {setComparisonOpen(false);setRestoreComparisonOpen(false);}
+    setWantedTickers(previous=>previous.filter(item=>item!==ticker));
   };
 
   const cancelSearch = () => {
@@ -120,6 +130,10 @@ export default function Screener() {
     const clock = window.setInterval(() => setClientNow(Date.now()), 60_000);
     const restore = () => {
       restoreState(parseScreenerUrl(window.location.search));
+      const comparison = parseComparisonUrl(window.location.search);
+      setWantedTickers(comparison.tickers);
+      setComparisonOpen(false);
+      setRestoreComparisonOpen(comparison.open);
       setInitialized(true);
     };
     restore();
@@ -136,11 +150,11 @@ export default function Screener() {
   useEffect(() => {
     if (!initialized) return;
     ++copyId.current;
-    const url = screenUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset });
+    const url = screenUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset },wantedTickers,comparisonOpen||restoreComparisonOpen);
     if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
     setCopyMessage("");
     setManualUrl("");
-  }, [initialized, search, sector, grade, maxPay, minUpside, sort, order, limit, offset]);
+  }, [initialized, search, sector, grade, maxPay, minUpside, sort, order, limit, offset,comparisonIds,comparisonOpen,restoreComparisonOpen]);
 
   useEffect(() => {
     if (manualUrl) {
@@ -151,7 +165,7 @@ export default function Screener() {
 
   const copyScreenLink = async () => {
     const id = ++copyId.current;
-    const url = screenUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset }).href;
+    const url = screenUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset },wantedTickers,comparisonOpen||restoreComparisonOpen).href;
     setCopyMessage("");
     setManualUrl("");
     try {
@@ -174,6 +188,7 @@ export default function Screener() {
     setError(null);
     const normalized = parseScreenerUrl(serializeScreenerUrl({ search, sector, grade, maxPay, minUpside, sort, order, limit, offset }));
     const q: ScreenerQuery = { sort: normalized.sort, order: normalized.order, limit: normalized.limit, offset: normalized.offset };
+    if (comparisonIds) q.compare = comparisonIds;
     if (normalized.search) q.search = normalized.search;
     if (normalized.sector) q.sector = normalized.sector;
     if (normalized.grade) q.grade = normalized.grade as ScreenerQuery["grade"];
@@ -183,6 +198,9 @@ export default function Screener() {
       .then((d) => {
         if (requestId.current !== id) return;
         setData(d);
+        setResolvedQuery(currentQuery);
+        setSelection(comparisonIds && d.comparison && d.comparison.tickers.join(",") === comparisonIds
+          ? {builtAt:d.built_at,source:d,rows:d.comparison.rows} : null);
         setLoading(false);
       })
       .catch((e) => {
@@ -191,7 +209,7 @@ export default function Screener() {
         setLoading(false);
       });
     return () => { ++requestId.current; };
-  }, [initialized, API_URL, search, sector, grade, maxPay, minUpside, sort, order, limit, offset, retryTick]);
+  }, [initialized, API_URL, search, sector, grade, maxPay, minUpside, sort, order, limit, offset, retryTick,comparisonIds]);
 
   // Changing any filter (or the page size) goes back to the first page.
   const resetPage = () => setOffset(0);
@@ -365,7 +383,7 @@ export default function Screener() {
                   disabled={!initialized || searchText.trim().slice(0, 100) !== search}
                   className={button}
                 >
-                  Copy screen link
+                  {wantedTickers.length>=2 ? "Copy comparison link" : "Copy screen link"}
                 </button>
                 <p role="status" aria-live="polite" className="w-full text-sm text-muted">{copyMessage}</p>
                 {manualUrl && (
@@ -386,17 +404,20 @@ export default function Screener() {
             </form>
 
             <p role="status" className="text-sm text-muted">{selectionMessage}</p>
-            {selectedRows.length > 0 && (
+            {wantedTickers.length > 0 && (
               <section aria-label="Comparison selection" className="min-w-0 rounded-xl border border-brass/40 bg-panel p-4">
-                <p className="text-sm">{selectedRows.length} of {MAX_COMPARISON_COMPANIES} companies selected. Select 2–4 to compare. Selections stay across filters and pages within a dated snapshot; undated results reset when refreshed. Reloading or leaving this page clears selections. Updating results closes the comparison.</p>
+                <p className="text-sm">{wantedTickers.length} of {MAX_COMPARISON_COMPANIES} companies selected. Select 2–4 to compare. The URL preserves selected tickers and filters; restored values come from the current cached snapshot and can change. Updating results closes the comparison.</p>
+                {loading && <p className="mt-2 text-sm text-muted">Restoring selected companies from the same snapshot…</p>}
+                {!loading && !error && data && (!comparisonLoaded || comparisonMissing.length>0) && <p role="alert" className="mt-2 text-sm text-brass">{comparisonMissing.length ? `Unavailable in this snapshot: ${comparisonMissing.join(", ")}. Remove these tickers or retry; a partial comparison will not open.` : "The data API could not restore this comparison. It may still be updating. Retry shortly."}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {selectedRows.map(row=><button key={row.ticker} type="button" aria-label={`Remove ${row.ticker} from comparison`} onClick={()=>removeSelected(row.ticker)} className={button}>{row.ticker} ×</button>)}
-                  <button ref={compareButton} type="button" disabled={!selectionReady || !canCompare(selectedRows)} onClick={()=>{if(selectionReady) setComparisonOpen(true);}} className={button}>Compare selected</button>
-                  <button type="button" onClick={()=>{setSelection(null);setComparisonOpen(false);}} className={button}>Clear selected</button>
+                  {wantedTickers.map(ticker=><button key={ticker} type="button" aria-label={`Remove ${ticker} from comparison`} onClick={()=>removeSelected(ticker)} className={button}>{ticker} ×</button>)}
+                  <button ref={compareButton} type="button" disabled={!comparisonReady} onClick={()=>{if(comparisonReady) setComparisonOpen(true);}} className={button}>Compare selected</button>
+                  <button type="button" onClick={()=>{setWantedTickers([]);setSelection(null);setComparisonOpen(false);setRestoreComparisonOpen(false);}} className={button}>Clear selected</button>
+                  {!loading && (!comparisonLoaded || comparisonMissing.length>0) && <button type="button" onClick={()=>setRetryTick(t=>t+1)} className={button}>Retry comparison</button>}
                 </div>
               </section>
             )}
-            {comparisonOpen && selectionReady && canCompare(selectedRows) && <ScreenerComparison rows={selectedRows} builtAt={selection?.builtAt??null} onClose={()=>{setComparisonOpen(false);compareButton.current?.focus();}}/>}
+            {comparisonOpen && comparisonReady && <ScreenerComparison rows={selectedRows} builtAt={selection?.builtAt??null} onClose={()=>{setComparisonOpen(false);setRestoreComparisonOpen(false);compareButton.current?.focus();}}/>}
 
             <p role="status" className="text-sm text-muted">
               {loading
@@ -529,8 +550,8 @@ export default function Screener() {
                           <td className="px-3 py-2">
                             <label className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center">
                               <input type="checkbox" aria-label={`Select ${r.ticker} for comparison`}
-                                checked={selectedRows.some(row=>row.ticker===r.ticker)}
-                                disabled={!selectionReady || (selectedRows.length>=MAX_COMPARISON_COMPANIES && !selectedRows.some(row=>row.ticker===r.ticker))}
+                                checked={wantedTickers.includes(r.ticker)}
+                                disabled={!selectionReady || (wantedTickers.length>=MAX_COMPARISON_COMPANIES && !wantedTickers.includes(r.ticker))}
                                 onChange={()=>selectRow(r)} className="h-5 w-5 accent-brass"/>
                             </label>
                           </td>
