@@ -5,6 +5,7 @@ import ScreenerDataNotes from "./ScreenerDataNotes";
 import ScreenerComparison from "./ScreenerComparison";
 import {canCompare, MAX_COMPARISON_COMPANIES, sameSelectionSnapshot, toggleSelection} from "@/lib/screenerSelection";
 import {parseComparisonUrl, writeComparisonParams} from "@/lib/comparisonUrl";
+import {localComparison} from "@/lib/localComparison";
 import { dataAgeDays, fieldReasons } from "@/lib/screenerContext";
 import { API_URL } from "@/lib/api";
 import { DEFAULT_SCREENER_STATE, parseScreenerUrl, serializeScreenerUrl, type ScreenerUrlState } from "@/lib/screenerUrl";
@@ -72,12 +73,14 @@ export default function Screener() {
   const [wantedTickers, setWantedTickers] = useState<string[]>([]);
   const [restoreComparisonOpen, setRestoreComparisonOpen] = useState(false);
   const [resolvedQuery, setResolvedQuery] = useState<string | null>(null);
+  const localSelectionQuery = useRef<string | null>(null);
   const [selectionMessage, setSelectionMessage] = useState("");
   const compareButton = useRef<HTMLButtonElement>(null);
   const selectedRows = selection && data && sameSelectionSnapshot(selection,data) ? selection.rows : [];
   const comparisonIds = wantedTickers.join(",");
   // A previous response with the same tickers may still belong to different filters.
-  const currentQuery = serializeScreenerUrl({search,sector,grade,maxPay,minUpside,sort,order,limit,offset}) + "|compare=" + comparisonIds;
+  const filterQuery = serializeScreenerUrl({search,sector,grade,maxPay,minUpside,sort,order,limit,offset});
+  const currentQuery = filterQuery + "|compare=" + comparisonIds;
   const selectionReady = resolvedQuery === currentQuery && !loading && !error && !!data?.available && searchText.trim().slice(0,100) === search;
   const comparisonLoaded = data?.comparison?.tickers.join(",") === comparisonIds;
   const comparisonMissing = comparisonLoaded ? data?.comparison?.missing ?? [] : [];
@@ -92,15 +95,31 @@ export default function Screener() {
 
   useEffect(()=>{if (!selectionReady) setComparisonOpen(false);},[selectionReady]);
 
+  const updateSelectedTickers = (tickers:string[]) => {
+    if (tickers.join(",")===comparisonIds) return;
+    ++copyId.current;
+    setCopyMessage("");
+    setManualUrl("");
+    const projected = data && selectionReady && (!wantedTickers.length || comparisonLoaded) ? localComparison(data,tickers) : null;
+    if (projected) {
+      const nextQuery=filterQuery+"|compare="+tickers.join(",");
+      localSelectionQuery.current=nextQuery;
+      setData(projected);
+      setResolvedQuery(nextQuery);
+      setSelection(tickers.length ? {builtAt:projected.built_at,source:projected,rows:projected.comparison!.rows} : null);
+    }
+    setWantedTickers(tickers);
+  };
+
   const selectRow = (row:ScreenerRow) => {
     if (!selectionReady || !data) return;
     if (wantedTickers.length <= 2 && wantedTickers.includes(row.ticker)) {setComparisonOpen(false);setRestoreComparisonOpen(false);}
     setSelectionMessage("");
-    setWantedTickers(previous=>toggleSelection(previous.map(ticker=>({ticker})),row).map(item=>item.ticker));
+    updateSelectedTickers(toggleSelection(wantedTickers.map(ticker=>({ticker})),row).map(item=>item.ticker));
   };
   const removeSelected = (ticker:string) => {
     if (wantedTickers.length <= 2) {setComparisonOpen(false);setRestoreComparisonOpen(false);}
-    setWantedTickers(previous=>previous.filter(item=>item!==ticker));
+    updateSelectedTickers(wantedTickers.filter(item=>item!==ticker));
   };
 
   const cancelSearch = () => {
@@ -129,6 +148,7 @@ export default function Screener() {
     setClientNow(Date.now());
     const clock = window.setInterval(() => setClientNow(Date.now()), 60_000);
     const restore = () => {
+      localSelectionQuery.current=null;
       restoreState(parseScreenerUrl(window.location.search));
       const comparison = parseComparisonUrl(window.location.search);
       setWantedTickers(comparison.tickers);
@@ -183,6 +203,11 @@ export default function Screener() {
   // A request id guards the response: a stale response can never overwrite a newer filter set.
   useEffect(() => {
     if (!initialized || !API_URL) return;
+    if (localSelectionQuery.current === currentQuery) {
+      localSelectionQuery.current=null;
+      return;
+    }
+    localSelectionQuery.current=null;
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
@@ -412,7 +437,7 @@ export default function Screener() {
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {wantedTickers.map(ticker=><button key={ticker} type="button" aria-label={`Remove ${ticker} from comparison`} onClick={()=>removeSelected(ticker)} className={button}>{ticker} ×</button>)}
                   <button ref={compareButton} type="button" disabled={!comparisonReady} onClick={()=>{if(comparisonReady) setComparisonOpen(true);}} className={button}>Compare selected</button>
-                  <button type="button" onClick={()=>{setWantedTickers([]);setSelection(null);setComparisonOpen(false);setRestoreComparisonOpen(false);}} className={button}>Clear selected</button>
+                  <button type="button" onClick={()=>{updateSelectedTickers([]);setComparisonOpen(false);setRestoreComparisonOpen(false);}} className={button}>Clear selected</button>
                   {!loading && (!comparisonLoaded || comparisonMissing.length>0) && <button type="button" onClick={()=>setRetryTick(t=>t+1)} className={button}>Retry comparison</button>}
                 </div>
               </section>
